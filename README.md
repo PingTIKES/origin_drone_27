@@ -114,9 +114,11 @@ WAIT_TAKEOFF → SEARCH → CONVERGE → RETURN → LAND → DONE
   按 z∈[0.35, 3.8] m 光栅化并膨胀 0.5 m 生成；文件缺失时回退到与简化场地
   `worlds/rm2025_field.sdf` 对应的内置解析障碍。8 连通 A* + 视线拉直平滑。
   实机演进时接口不变，障碍来源换成 D435i 深度点云局部建图即可
-- `goal_planner.py`：**RViz 打点导航**。订阅 RViz "2D Nav Goal" 的 `/goal_pose`，
-  A* 规划后把路径拆成航点序列依次下发给指定无人机的 offboard 节点；
-  同时发布 `/field_map` 占据栅格、`/planned_path` 路径、`/goal_marker` 目标标记
+- `goal_planner.py`：**RViz 打点导航**（每机一个实例，命名空间 `uavN`）。
+  订阅本机 "2D Nav Goal" 工具发出的 `/uavN/goal_pose`，A* 规划后把路径拆成
+  航点序列依次下发给本机 offboard 节点；发布 `/uavN/planned_path` 路径、
+  `/goal_marker` 目标标记（ns=goal_uavN 按机着色）；`/field_map` 占据栅格
+  只由 `publish_map=True` 的实例（uav1）发布，话题全局共享
 - `pose_tf_publisher.py`：**位姿→TF+标记桥**。把 4 机的 PX4 本地 NED 位置换算到
   公共系，广播 `map->uavN` TF 并发布机身/机头/机号标记供 RViz 显示
 - `collision_monitor.py`：**集群级防碰兜底**。10 Hz 两两计算机间 3D 距离：
@@ -146,12 +148,13 @@ WAIT_TAKEOFF → SEARCH → CONVERGE → RETURN → LAND → DONE
 
 - `launch/sim_swarm.launch.py`：**仿真一键启动**，拉起 4 个 offboard 节点 +
 4 个仿真检测器 + 集群调度 + 防碰监视，`num_uavs`/`sim` 等参数可调
-- `launch/goal_nav.launch.py`：**RViz 打点导航**（单机），4 机起飞悬停 +
-goal_planner（A*）+ TF/标记桥 + RViz，`uav_id` 选择被控机
+- `launch/goal_nav.launch.py`：**RViz 打点导航**（四机各自独立），4 机起飞悬停 +
+4 个 goal_planner（A*，命名空间 uavN 互不干扰）+ TF/标记桥 + RViz
+（工具栏 4 个 2D Nav Goal，从左到右对应 uav1~uav4）
 - `launch/uav_bringup.launch.py`：实机单机启动（`auto_takeoff` 默认 False，遥控器先验证）
 - `config/params.yaml`：**调参唯一入口**——搜索区域、高度层、防碰距离、
 仿真目标位置都在这一个文件里
-- `config/rm2025.rviz`：RViz 配置（场地地图/规划路径/无人机标记/2D Nav Goal 工具）
+- `config/rm2025.rviz`：RViz 配置（场地地图/每机规划路径/无人机标记/4 个 2D Nav Goal 工具）
 
 ---
 
@@ -259,28 +262,35 @@ ros2 topic list | grep px4_
 
 终端 A 按 `Ctrl+C`，或任意终端执行 `./scripts/stop_sim.sh`。
 
-### 附加玩法：RViz 打点 + A* 路径规划（单机）
+### 附加玩法：RViz 打点 + A* 路径规划（四机各自独立）
 
 不想跑整套集群任务，只想"点哪飞哪"时，终端 B 换成：
 
 ```bash
-ros2 launch uav_bringup goal_nav.launch.py              # 打点控制 1 号机
-ros2 launch uav_bringup goal_nav.launch.py uav_id:=3    # 打点控制 3 号机
+ros2 launch uav_bringup goal_nav.launch.py
+```
+
+或者更省事——仿真和 RViz 打点栈**一条命令全起**（跳过终端 B）：
+
+```bash
+WITH_RVIZ=1 ./scripts/start_sim_4uav.sh
 ```
 
 启动后 4 机照常自动起飞到分层高度悬停，同时弹出 RViz：
 灰色的是赛场占据栅格地图（基地/资源岛/前哨站/高地），彩色方块是 4 架无人机。
-用顶部工具栏的 **"2D Nav Goal"** 在地图上按住拖出目标点（和朝向，
-朝向目前不用），
-`goal_planner` 会在占据栅格上跑 A* 并拉直平滑（绿色线为规划路径），
-被控无人机沿路径逐航点飞过去，其余机原地悬停。
+顶部工具栏有 **4 个 "2D Nav Goal" 按钮，从左到右依次对应 uav1~uav4**
+（悬停按钮可见各自话题 `/uav1/goal_pose` ~ `/uav4/goal_pose`）。
+选中某机的按钮后在地图上按住拖出目标点，该机的 `goal_planner` 就在
+占据栅格上跑 A* 并拉直平滑，沿路径逐航点飞过去——**路径线颜色与机身
+标记同色**（1 红 / 2 绿 / 3 蓝 / 4 黄），目标点标记也是同色圆柱。
+四机可同时各自执行不同打点任务，互不干扰。
 
-- 规划状态：`ros2 topic echo /goal_planner/state`（EXECUTING/REACHED/NO_PATH）
+- 规划状态：`ros2 topic echo /uav1/goal_state`（EXECUTING/REACHED/NO_PATH，每机一个）
 - 打在了障碍上：自动吸附到最近空闲点并打印警告
 - **不要与 `run_swarm.sh` 同时跑**——两者都会给 `/uavN/waypoint` 发航点会互抢
 - 调地图：`src/uav_planning/uav_planning/field_map.py`（分辨率/膨胀/障碍清单）
 - 实机演进：把 field_map 的障碍来源换成 D435i 深度点云局部建图，
-  goal_planner 的接口（/goal_pose 进、/uavN/waypoint 出）完全不用动
+  goal_planner 的接口（/uavN/goal_pose 进、/uavN/waypoint 出）完全不用动
 
 ### 附加玩法：OpenVINS 双目 VIO 仿真测试
 
@@ -426,7 +436,7 @@ ros2 topic pub /uav3/command std_msgs/msg/String "{data: 'land'}" -1
 | 飞机出生点与世界对不上（穿模/悬空） | 出生点三处配置不同步：start_sim_4uav.sh 的 SPAWN_POSES、params.yaml 的 spawn_offsets、launch 的 SPAWN_OFFSETS_NED 必须一致（注意 NED=(enu_y, enu_x)） |
 | 某机不跟航点 | 确认航点发到了该机的命名空间 `/uavN/waypoint`，且坐标是该机**本地系**（公共系坐标需减出生点偏移） |
 | RViz 打开后看不到地图/无人机 | 确认是 `goal_nav.launch.py` 启动的（它才发 `/field_map` 和 `/uav_markers`）；Fixed Frame 必须是 `map`；地图话题 QoS 需 Reliable+Transient Local（rm2025.rviz 已配好） |
-| 打点没反应 | `ros2 topic echo /goal_pose` 确认 RViz 发出去了；`ros2 topic echo /goal_planner/state` 看状态；NO_PATH 说明起终点被障碍封死，看 goal_planner 终端日志 |
+| 打点没反应 | 确认选对工具栏按钮（从左到右 uav1~uav4，悬停可看话题名）；`ros2 topic echo /uav1/goal_pose` 确认 RViz 发出去了；`ros2 topic echo /uav1/goal_state` 看状态；NO_PATH 说明起终点被障碍封死，看 goal_planner 终端日志 |
 
 ## 6. 关键约定
 
