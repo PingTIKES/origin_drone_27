@@ -10,8 +10,9 @@
   飞控侧无需任何改动：仍用 gz_x500 对应的 airframe 4001，
   PX4 的 gz_bridge 照常订阅 base_link 下的 IMU（本模型不改任何原有部件）。
 
-  用法（只给 1 号机挂相机，其余机仍是普通 x500，减轻渲染压力）：
-    VIO_UAV=1 ./scripts/start_sim_4uav.sh
+  用法：默认 ALL_STEREO=1 全机挂载（start_sim_4uav.sh 按机号生成本模型的
+    x500_stereo_uavN 变体，include d435i_uavN，话题按机独立）；
+    单机旧模式（省资源）：ALL_STEREO=0 VIO_UAV=1 ./scripts/start_sim_4uav.sh
 -->
 <sdf version='1.9'>
   <model name='x500_stereo'>
