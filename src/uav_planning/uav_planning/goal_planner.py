@@ -1,16 +1,16 @@
 """
-RViz 打点导航节点：订阅 RViz "2D Nav Goal" 工具发布的 /goal_pose，
-在 RM2025 赛场占据栅格上跑 A* + 视线拉直，把路径拆成航点序列
-依次下发给指定无人机的 offboard 节点（/uavN/waypoint）。
+RViz 打点导航节点（每机一个实例，命名空间 uavN）：订阅本机 RViz
+"2D Nav Goal" 工具发布的 goal_pose，在 RM2025 赛场占据栅格上跑
+A* + 视线拉直，把路径拆成航点序列依次下发给本机的 offboard 节点。
 
 话题：
-  订阅  /goal_pose                     geometry_msgs/PoseStamped（RViz 打点，map 系）
+  订阅  goal_pose（→/uavN/goal_pose）   geometry_msgs/PoseStamped（RViz 该机 Nav Goal 工具，map 系）
   订阅  /px4_N/fmu/out/vehicle_local_position（本机位置，换算公共系）
   发布  /uavN/waypoint                 geometry_msgs/Point（本机 NED，z 负为向上）
-  发布  /planned_path                  nav_msgs/Path（RViz 显示）
+  发布  planned_path（→/uavN/planned_path） nav_msgs/Path（RViz 显示，每机一条）
   发布  /field_map                     nav_msgs/OccupancyGrid（latched，RViz 地图）
-  发布  /goal_marker                   visualization_msgs/Marker（目标点标记）
-  发布  /goal_planner/state            std_msgs/String（状态机）
+  发布  /goal_marker                   visualization_msgs/Marker（共享话题，ns=goal_uavN 按机区分）
+  发布  goal_state（→/uavN/goal_state）  std_msgs/String（状态机）
 
 坐标约定：RViz map 系 = 公共系（x=北，y=东，z 上），与 swarm_coordinator
 的公共 NED x/y 完全一致，z 取反显示。spawn_offsets 必须与
@@ -35,6 +35,11 @@ from visualization_msgs.msg import Marker
 from px4_msgs.msg import VehicleLocalPosition
 
 from uav_planning.field_map import FieldMap
+
+
+# 每机显示颜色 (r, g, b)，与 pose_tf_publisher 的机身颜色一致
+COLORS = {1: (0.9, 0.2, 0.2), 2: (0.2, 0.8, 0.3), 3: (0.2, 0.4, 0.95),
+          4: (0.95, 0.8, 0.1)}
 
 
 def px4_qos() -> QoSProfile:
@@ -62,6 +67,7 @@ class GoalPlanner(Node):
         self.declare_parameter('inflate', 0.5)              # 障碍膨胀 m
         self.declare_parameter('map_file', '')              # 离线栅格 .npz（默认真实场地）
         self.declare_parameter('reach_tol', 0.45)           # 航点到达判定 m
+        self.declare_parameter('publish_map', False)        # 多实例时只让一架发场地地图
 
         self.uav_id = int(self.get_parameter('uav_id').value)
         n = int(self.get_parameter('num_uavs').value)
@@ -98,29 +104,31 @@ class GoalPlanner(Node):
         # ---- 接口 ----
         uid = self.uav_id
         self.create_subscription(
-            PoseStamped, '/goal_pose', self._cb_goal, 10)
+            PoseStamped, 'goal_pose', self._cb_goal, 10)
         self.create_subscription(
             VehicleLocalPosition, f'/px4_{uid}/fmu/out/vehicle_local_position',
             self._cb_pos, px4_qos())
         self.wp_pub = self.create_publisher(Point, f'/uav{uid}/waypoint', 10)
-        self.path_pub = self.create_publisher(Path, '/planned_path', 10)
+        self.path_pub = self.create_publisher(Path, 'planned_path', 10)
         self.marker_pub = self.create_publisher(Marker, '/goal_marker', 10)
-        self.state_pub = self.create_publisher(String, '/goal_planner/state', 10)
+        self.state_pub = self.create_publisher(String, 'goal_state', 10)
 
-        # 场地地图（latched：reliable + transient_local，RViz Map 直接显示）
-        map_qos = QoSProfile(
-            reliability=QoSReliabilityPolicy.RELIABLE,
-            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-            history=QoSHistoryPolicy.KEEP_LAST, depth=1)
-        self.map_pub = self.create_publisher(
-            __import__('nav_msgs.msg', fromlist=['OccupancyGrid']).OccupancyGrid,
-            '/field_map', map_qos)
-        self._publish_field_map()
+        # 场地地图（latched：reliable + transient_local，RViz Map 直接显示）。
+        # 话题 /field_map 全局共享，多实例运行时只由 publish_map=True 的那架发布
+        if bool(self.get_parameter('publish_map').value):
+            map_qos = QoSProfile(
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+                history=QoSHistoryPolicy.KEEP_LAST, depth=1)
+            self.map_pub = self.create_publisher(
+                __import__('nav_msgs.msg', fromlist=['OccupancyGrid']).OccupancyGrid,
+                '/field_map', map_qos)
+            self._publish_field_map()
 
         self.create_timer(0.2, self._tick)  # 5 Hz
         self.get_logger().info(
             f'打点导航就绪：控制 uav{uid}，巡航高度 {self.alt} m，'
-            f'在 RViz 里用 "2D Nav Goal" 工具点目标')
+            f'RViz 里用 uav{uid} 的 "2D Nav Goal" 工具（话题 /uav{uid}/goal_pose）点目标')
 
     # ---------------- 回调 ----------------
     def _cb_pos(self, msg: VehicleLocalPosition):
@@ -173,8 +181,8 @@ class GoalPlanner(Node):
         m = Marker()
         m.header.frame_id = 'map'
         m.header.stamp = self.get_clock().now().to_msg()
-        m.ns = 'goal'
-        m.id = 0
+        m.ns = f'goal_uav{self.uav_id}'
+        m.id = self.uav_id
         m.type = Marker.CYLINDER
         m.action = Marker.ADD
         m.pose.position.x = x
@@ -184,10 +192,8 @@ class GoalPlanner(Node):
         m.scale.x = 0.3
         m.scale.y = 0.3
         m.scale.z = self.alt
-        m.color.r = 0.1
-        m.color.g = 0.9
-        m.color.b = 0.2
-        m.color.a = 0.8
+        r, g, b = COLORS.get(self.uav_id, (0.1, 0.9, 0.2))
+        m.color.r, m.color.g, m.color.b, m.color.a = r, g, b, 0.8
         self.marker_pub.publish(m)
 
     # ---------------- 主循环 ----------------
