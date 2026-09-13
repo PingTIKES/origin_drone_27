@@ -1,14 +1,23 @@
 """
 RViz 打点导航节点（每机一个实例，命名空间 uavN）：订阅本机 RViz
-"2D Nav Goal" 工具发布的 goal_pose，在 RM2025 赛场占据栅格上跑
-A* + 视线拉直，把路径拆成航点序列依次下发给本机的 offboard 节点。
+"2D Nav Goal" 工具发布的 goal_pose，把目标拆成航点序列下发。
+
+两种模式（参数 use_field_map）：
+  True  = 先验地图模式：在 RM2025 赛场离线占据栅格上跑 A* + 视线拉直，
+          绕开场地静态障碍（需要 publish_map 的一架发 /field_map 给 RViz）；
+  False = 无先验地图模式（比赛规则要求）：不做任何静态规划，目标直航
+          （单航点），局部避障完全交给机载感知链路——
+          深度相机 → stereo_depth_node → obstacles 点云 → vfh_planner
+          → waypoint。航点经 launch remap 串成：
+          goal_planner.waypoint → vfh.waypoint_in → vfh.waypoint → offboard。
 
 话题：
   订阅  goal_pose（→/uavN/goal_pose）   geometry_msgs/PoseStamped（RViz 该机 Nav Goal 工具，map 系）
   订阅  /px4_N/fmu/out/vehicle_local_position（本机位置，换算公共系）
-  发布  /uavN/waypoint                 geometry_msgs/Point（本机 NED，z 负为向上）
+  发布  waypoint（→/uavN/waypoint）     geometry_msgs/Point（本机 NED，z 负为向上；
+        无先验模式下会被 launch remap 到 waypoint_in 喂给 VFH）
   发布  planned_path（→/uavN/planned_path） nav_msgs/Path（RViz 显示，每机一条）
-  发布  /field_map                     nav_msgs/OccupancyGrid（latched，RViz 地图）
+  发布  /field_map                     nav_msgs/OccupancyGrid（latched，仅先验地图模式）
   发布  /goal_marker                   visualization_msgs/Marker（共享话题，ns=goal_uavN 按机区分）
   发布  goal_state（→/uavN/goal_state）  std_msgs/String（状态机）
 
@@ -68,6 +77,7 @@ class GoalPlanner(Node):
         self.declare_parameter('map_file', '')              # 离线栅格 .npz（默认真实场地）
         self.declare_parameter('reach_tol', 0.45)           # 航点到达判定 m
         self.declare_parameter('publish_map', False)        # 多实例时只让一架发场地地图
+        self.declare_parameter('use_field_map', True)       # False=无先验地图直航
 
         self.uav_id = int(self.get_parameter('uav_id').value)
         n = int(self.get_parameter('num_uavs').value)
@@ -77,24 +87,30 @@ class GoalPlanner(Node):
                              if len(flat) >= 2 * i}
         self.alt = float(self.get_parameter('cruise_alt').value)
         self.reach_tol = float(self.get_parameter('reach_tol').value)
+        self.use_field_map = bool(self.get_parameter('use_field_map').value)
 
-        map_file = str(self.get_parameter('map_file').value)
-        if not map_file:
-            # 默认：包内离线栅格（RMUC2025 真实场地光栅化产物）
-            try:
-                from ament_index_python.packages import get_package_share_directory
-                map_file = os.path.join(
-                    get_package_share_directory('uav_planning'),
-                    'maps', 'rmuc_2025_occ.npz')
-            except Exception:  # noqa: BLE001
-                map_file = ''
-        self.fmap = FieldMap(
-            resolution=float(self.get_parameter('map_resolution').value),
-            inflate=float(self.get_parameter('inflate').value),
-            map_file=map_file)
-        self.get_logger().info(
-            f'地图来源: {"离线栅格 " + map_file if self.fmap._from_file else "内置解析障碍"} '
-            f'({self.fmap.nx}x{self.fmap.ny} @ {self.fmap.res} m)')
+        if self.use_field_map:
+            map_file = str(self.get_parameter('map_file').value)
+            if not map_file:
+                # 默认：包内离线栅格（RMUC2025 真实场地光栅化产物）
+                try:
+                    from ament_index_python.packages import get_package_share_directory
+                    map_file = os.path.join(
+                        get_package_share_directory('uav_planning'),
+                        'maps', 'rmuc_2025_occ.npz')
+                except Exception:  # noqa: BLE001
+                    map_file = ''
+            self.fmap = FieldMap(
+                resolution=float(self.get_parameter('map_resolution').value),
+                inflate=float(self.get_parameter('inflate').value),
+                map_file=map_file)
+            self.get_logger().info(
+                f'地图来源: {"离线栅格 " + map_file if self.fmap._from_file else "内置解析障碍"} '
+                f'({self.fmap.nx}x{self.fmap.ny} @ {self.fmap.res} m)')
+        else:
+            self.fmap = None
+            self.get_logger().info(
+                '无先验地图模式：目标直航，局部避障交给 VFH+ 感知链路')
 
         # ---- 状态 ----
         self.pos = None            # 公共系 (x, y, z_ned)
@@ -108,14 +124,15 @@ class GoalPlanner(Node):
         self.create_subscription(
             VehicleLocalPosition, f'/px4_{uid}/fmu/out/vehicle_local_position',
             self._cb_pos, px4_qos())
-        self.wp_pub = self.create_publisher(Point, f'/uav{uid}/waypoint', 10)
+        self.wp_pub = self.create_publisher(Point, 'waypoint', 10)
         self.path_pub = self.create_publisher(Path, 'planned_path', 10)
         self.marker_pub = self.create_publisher(Marker, '/goal_marker', 10)
         self.state_pub = self.create_publisher(String, 'goal_state', 10)
 
         # 场地地图（latched：reliable + transient_local，RViz Map 直接显示）。
-        # 话题 /field_map 全局共享，多实例运行时只由 publish_map=True 的那架发布
-        if bool(self.get_parameter('publish_map').value):
+        # 话题 /field_map 全局共享，多实例运行时只由 publish_map=True 的那架发布；
+        # 无先验地图模式下不发
+        if bool(self.get_parameter('publish_map').value) and self.use_field_map:
             map_qos = QoSProfile(
                 reliability=QoSReliabilityPolicy.RELIABLE,
                 durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
@@ -140,19 +157,25 @@ class GoalPlanner(Node):
         if self.pos is None:
             self.get_logger().warn('尚未收到本机位置，无法规划')
             return
-        if self.fmap.occupied(gx, gy):
-            gx, gy = self.fmap.nearest_free(gx, gy)
-            self.get_logger().warn(f'目标在障碍内，已吸附到最近空闲点 ({gx:.1f}, {gy:.1f})')
-        start = (self.pos[0], self.pos[1])
-        raw = self.fmap.astar(start, (gx, gy))
-        if raw is None:
-            self.state = 'NO_PATH'
-            self.get_logger().warn(f'A* 失败：({start[0]:.1f},{start[1]:.1f}) -> ({gx:.1f},{gy:.1f})')
-            return
-        self.waypoints = self.fmap.smooth(raw)
+        if self.use_field_map:
+            if self.fmap.occupied(gx, gy):
+                gx, gy = self.fmap.nearest_free(gx, gy)
+                self.get_logger().warn(f'目标在障碍内，已吸附到最近空闲点 ({gx:.1f}, {gy:.1f})')
+            start = (self.pos[0], self.pos[1])
+            raw = self.fmap.astar(start, (gx, gy))
+            if raw is None:
+                self.state = 'NO_PATH'
+                self.get_logger().warn(f'A* 失败：({start[0]:.1f},{start[1]:.1f}) -> ({gx:.1f},{gy:.1f})')
+                return
+            self.waypoints = self.fmap.smooth(raw)
+            self.get_logger().info(
+                f'收到目标 ({gx:.1f}, {gy:.1f})，A* 路径 {len(self.waypoints)} 个航点')
+        else:
+            # 无先验地图：直航单航点，绕障由 VFH+ 感知链路负责
+            self.waypoints = [(gx, gy)]
+            self.get_logger().info(
+                f'收到目标 ({gx:.1f}, {gy:.1f})，直航（无先验地图，VFH+ 避障）')
         self.state = 'EXECUTING'
-        self.get_logger().info(
-            f'收到目标 ({gx:.1f}, {gy:.1f})，路径 {len(self.waypoints)} 个航点')
         self._publish_path()
         self._publish_goal_marker(gx, gy)
 
@@ -167,7 +190,9 @@ class GoalPlanner(Node):
         p = Path()
         p.header.stamp = self.get_clock().now().to_msg()
         p.header.frame_id = 'map'
-        for x, y in self.waypoints:
+        pts = ([(self.pos[0], self.pos[1])] if self.pos is not None else []) \
+            + list(self.waypoints)
+        for x, y in pts:
             ps = PoseStamped()
             ps.header = p.header
             ps.pose.position.x = x
