@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  RM2027 四机集群 CycloneDDS 实机通信配置
+  ========================================
+
+  拓扑：地面站 WiFi 热点（或同一路由器）下的星型局域网
+    地面站   192.168.10.1   （swarm_coordinator / collision_monitor / RViz）
+    板 uav1  192.168.10.11  （MicroXRCEAgent + offboard + OpenVINS + 感知避障）
+    板 uav2  192.168.10.12
+    板 uav3  192.168.10.13
+    板 uav4  192.168.10.14
+
+  关键点：
+    - WiFi 上 UDP 多播丢包率高，禁用多播（AllowMulticast=false），
+      全部走显式 Peers 单播列表，DDS 发现才稳定。
+    - 每台机器把本文件拷到任意固定路径，并导出：
+        export ROS_DOMAIN_ID=42
+        export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+        export CYCLONEDDS_URI=file:///绝对路径/cyclonedds.xml
+      （deploy/start_onboard.sh 已内置这三行）
+    - Peers 列表里写自己没关系，CycloneDDS 会自动忽略本机地址。
+    - 改了 IP 规划就改 <Peers> 一节，五台机器保持同一份文件。
+
+  带宽纪律（必须遵守，否则 WiFi 必炸）：
+    - 图像 / 点云（/uavN/d435i/*、/uavN/vio_cam*）只在板子内部消费，
+      绝不从地面站订阅；
+    - 跨网只允许小话题：位姿、状态、目标点、报警（KB/s 级）。
+-->
+<CycloneDDS>
+  <Domain id="42">
+    <General>
+      <Interfaces>
+        <!-- 按实际网卡名调整：LubanCat 板载 WiFi 通常是 wlan0，有线 eth0 -->
+        <NetworkInterface name="wlan0" priority="default" multicast="false" />
+      </Interfaces>
+      <AllowMulticast>false</AllowMulticast>
+      <MaxMessageSize>65500B</MaxMessageSize>
+    </General>
+    <Discovery>
+      <Peers>
+        <Peer address="192.168.10.1"/>
+        <Peer address="192.168.10.11"/>
+        <Peer address="192.168.10.12"/>
+        <Peer address="192.168.10.13"/>
+        <Peer address="192.168.10.14"/>
+      </Peers>
+      <ParticipantIndex>auto</ParticipantIndex>
+    </Discovery>
+    <Internal>
+      <!-- WiFi 抖动大，心跳放宽一点，避免误判掉线 -->
+      <HeartbeatInterval>500ms</HeartbeatInterval>
+    </Internal>
+  </Domain>
+</CycloneDDS>
