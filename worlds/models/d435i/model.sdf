@@ -33,7 +33,10 @@
     - 传感器姿态 rpy=(-90, 0, -90)：Gazebo 相机光学系 z 前向/x 右/y 下，
       该旋转使镜头朝机头方向（base_link +x）
 
-  话题（绝对话题，整个仿真只允许一架带相机的飞机，否则撞名）：
+  话题（绝对话题模板——单机 VIO_UAV 模式直接使用本文件；
+    ALL_STEREO=1 全机模式由 start_sim_4uav.sh 按机号 sed 生成
+    /uavN/ 前缀的副本到 worlds/models/.gen/，避免多机撞名；
+    模板单源维护，请勿手动修改 .gen 下的生成物）：
     /vio_cam0/image  /vio_cam1/image   双目红外（VIO，桥接后 /uavN/cam0|1/image_raw）
     /d435i/color/image_raw             RGB 彩色（检测）
     /d435i/depth/image_raw             深度 32FC1（避障）
