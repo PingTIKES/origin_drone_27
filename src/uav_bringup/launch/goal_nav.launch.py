@@ -8,15 +8,19 @@ RViz 打点导航一键启动（需先运行 scripts/start_sim_4uav.sh；
 
 启动内容：
     每机：uav_control/offboard_control（4 机自动起飞到分层高度悬停）
-    每机：uav_planning/goal_planner（命名空间 uavN，订阅 /uavN/goal_pose，
-          A* 规划后逐航点下发给本机；uav1 的实例额外发布 /field_map）
-    相机：ros_gz_bridge 把 cam_uavs 指定机的 D435i 彩色图
-          /uavN/d435i/color/image_raw 桥接成 ROS 话题供 RViz 显示
-          （默认只桥 1 号机——每路 1280×720@30 原始图约 79 MB/s，
-          8GB 机器同时桥 4 路会明显卡；cam_uavs:="0" 关闭桥接）
+    每机：uav_planning/goal_planner（命名空间 uavN，订阅 /uavN/goal_pose；
+          use_field_map=false 无先验地图直航，避障交给感知链路）
+    相机：ros_gz_bridge 把 cam_uavs 指定机的 D435i 彩色图 + 深度图桥接成
+          ROS 话题（默认只桥 1 号机——彩色 1280×720@30 约 79 MB/s，
+          8GB 机器别贪多；cam_uavs:="0" 关闭桥接）
+    避障（仅 cam_uavs 指定的机）：uav_perception/stereo_depth_node
+          （深度图→机体障碍点云 /uavN/obstacles）+ uav_planning/vfh_planner
+          （VFH+ 选向）。这些机的航点链路自动改道：
+          goal_planner.waypoint →(remap)→ vfh.waypoint_in → vfh.waypoint
+          → offboard；不在 cam_uavs 里的机保持 goal_planner 直连 offboard
     显示：uav_planning/pose_tf_publisher（map->uavN TF + 机身标记）
-          rviz2（加载 config/rm2025.rviz，含场地地图/每机路径/目标标记/
-          D435i 图像窗口，Displays 面板勾选 D435i_uavN 即显示对应机画面）
+          rviz2（加载 config/rm2025.rviz，含每机路径/目标标记/D435i 图像
+          窗口/障碍点云显示，Displays 面板勾选 D435i_uavN、Obstacles_uavN）
 
 操作：RViz 顶部工具栏有 4 个 "2D Nav Goal" 按钮，从左到右依次对应
 uav1~uav4（悬停按钮可看话题名 /uavN/goal_pose）。选中某机的按钮后在
@@ -62,8 +66,11 @@ def _setup(context, *args, **kwargs):
             output='screen',
         ))
 
-    # 打点路径规划：每机一个实例（独立 Nav Goal 工具 → 独立规划互不干扰）
+    # 打点路径规划：每机一个实例（独立 Nav Goal 工具 → 独立规划互不干扰）。
+    # 无先验地图（比赛规则）：use_field_map=false 直航；cam_uavs 里的机
+    # 航点 remap 到 waypoint_in，经 VFH+ 避障后才到 offboard
     for i in range(1, num_uavs + 1):
+        has_cam = i in cam_uavs
         nodes.append(Node(
             package='uav_planning',
             executable='goal_planner',
@@ -72,13 +79,14 @@ def _setup(context, *args, **kwargs):
             parameters=[params_file, {
                 'uav_id': i,
                 'cruise_alt': 2.0 + (i - 1) * 0.5,
-                # 场地地图 /field_map 是共享 latched 话题，只发一次
-                'publish_map': i == 1,
+                'use_field_map': False,
+                'publish_map': False,
             }],
+            remappings=[('waypoint', 'waypoint_in')] if has_cam else [],
             output='screen',
         ))
 
-    # D435i 彩色图桥接（gz -> ROS，供 RViz Image 显示）
+    # D435i 桥接（gz -> ROS）：cam_uavs 每机桥彩色图（RViz 看）+ 深度图（避障用）
     # ALL_STEREO=1（默认）：gz 话题带 /uavN 前缀，同名桥接；
     # 单机模式（ALL_STEREO=0, VIO_UAV=N）：gz 话题无前缀，remap 到 /uavN/ 下
     if cam_uavs:
@@ -86,15 +94,23 @@ def _setup(context, *args, **kwargs):
         remaps = []
         for i in cam_uavs:
             if stereo_all:
-                bridge_args.append(
+                bridge_args += [
                     f'/uav{i}/d435i/color/image_raw'
-                    '@sensor_msgs/msg/Image@gz.msgs.Image')
+                    '@sensor_msgs/msg/Image@gz.msgs.Image',
+                    f'/uav{i}/d435i/depth/image_raw'
+                    '@sensor_msgs/msg/Image@gz.msgs.Image',
+                ]
             else:
-                bridge_args.append(
+                bridge_args += [
                     '/d435i/color/image_raw'
-                    '@sensor_msgs/msg/Image@gz.msgs.Image')
-                remaps.append(('/d435i/color/image_raw',
-                               f'/uav{i}/d435i/color/image_raw'))
+                    '@sensor_msgs/msg/Image@gz.msgs.Image',
+                    '/d435i/depth/image_raw'
+                    '@sensor_msgs/msg/Image@gz.msgs.Image',
+                ]
+                remaps += [
+                    ('/d435i/color/image_raw', f'/uav{i}/d435i/color/image_raw'),
+                    ('/d435i/depth/image_raw', f'/uav{i}/d435i/depth/image_raw'),
+                ]
         nodes.append(Node(
             package='ros_gz_bridge',
             executable='parameter_bridge',
@@ -102,6 +118,25 @@ def _setup(context, *args, **kwargs):
             output='screen',
             arguments=bridge_args,
             remappings=remaps,
+        ))
+
+    # 感知避障链路（仅 cam_uavs 的机）：深度图 → 障碍点云 → VFH+ → offboard
+    for i in cam_uavs:
+        nodes.append(Node(
+            package='uav_perception',
+            executable='stereo_depth_node',
+            name='stereo_depth_node',
+            namespace=f'uav{i}',
+            parameters=[{'uav_id': i}],
+            output='screen',
+        ))
+        nodes.append(Node(
+            package='uav_planning',
+            executable='vfh_planner',
+            name='vfh_planner',
+            namespace=f'uav{i}',
+            parameters=[params_file, {'px4_ns': f'px4_{i}'}],
+            output='screen',
         ))
 
     # 位姿 -> TF + 标记
