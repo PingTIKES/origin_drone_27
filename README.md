@@ -143,6 +143,9 @@ WAIT_TAKEOFF → SEARCH → CONVERGE → RETURN → LAND → DONE
 
 仿真测试链路（`x500_stereo` 双目模型 + ros_gz_bridge + OpenVINS 仿真配置 +
 精度评估脚本）已内置，用法见第 3 节「附加玩法：OpenVINS 双目 VIO 仿真测试」。
+默认 `ALL_STEREO=1` 四机全部挂载 D435i（启动脚本按机号从模板生成独立话题的
+模型副本到 `worlds/models/.gen/`，单源维护勿手改），桥接后每机话题为
+`/uavN/cam0|1/image_raw`（VIO 双目）、`/uavN/d435i/color|depth`、`/uavN/d435i/imu`。
 
 ### 2.8 uav_bringup —— 启动与参数（总开关）
 
@@ -318,15 +321,24 @@ source ~/catkin_ws_ov/install/setup.bash
 **运行**（三个终端）：
 
 ```bash
-# 终端 A：VIO 模式起仿真（1 号机自动换 x500_stereo 双目模型，其余机不变）
-VIO_UAV=1 ./scripts/start_sim_4uav.sh
+# 终端 A：起仿真（默认 ALL_STEREO=1，四机全部挂 D435i）
+./scripts/start_sim_4uav.sh
+# 旧的单机模式（只 1 号机带相机，最省资源）：
+#   ALL_STEREO=0 VIO_UAV=1 ./scripts/start_sim_4uav.sh
 
-# 终端 B：桥接 + OpenVINS（自动读取仿真分区、检查依赖、等相机就绪）
+# 终端 B：桥接 + OpenVINS（自动识别全机/单机模式；全机模式桥接 4 机
+#   全部传感器话题，OpenVINS 默认只跑 uav1——每实例约 1 核 CPU，
+#   多机同跑：VIO_UAVS="1 3" ./scripts/run_openvins_sim.sh）
 ./scripts/run_openvins_sim.sh
 
 # 终端 C：精度评估（OpenVINS 轨迹 vs PX4 SITL 本地位置≈真值，自动对齐后报漂移）
 ros2 run uav_localization compare_vio_gt.py --ros-args -p uav_id:=1
 ```
+
+> **性能提示**：`ALL_STEREO=1` 会多渲染 12 路相机（4×双目 + 4×RGB + 4×深度），
+> 8GB 内存/核显机器可能明显掉帧，而图像掉帧会直接拖垮 VIO 跟踪。
+> 卡顿时按序尝试：关 RViz → `HEADLESS=1` 不开 Gazebo GUI → 回退单机模式
+> （`ALL_STEREO=0 VIO_UAV=1`）。
 
 **操作顺序**：仿真加载完成后先让 1 号机在停机坪**静置约 3 秒**，
 终端 B 刷出 `[ZUPT]: accepted` 即静止初始化完成，**此时应直接起飞**——
@@ -341,6 +353,7 @@ ros2 run uav_localization compare_vio_gt.py --ros-args -p uav_id:=1
 |---|---|
 | D435i 五合一传感器（双目红外 640×480@30 基线 50mm hfov 87° + RGB 1280×720@30 hfov 69° + 深度 640×480@15 0.1~10m + IMU 200Hz，挂点 base_link (0.17,0,-0.06)） | `worlds/models/d435i/model.sdf` |
 | x500 双目变体（merge x500 + 挂 d435i） | `worlds/models/x500_stereo/model.sdf` |
+| 全机挂载时的每机独立话题副本（启动时自动生成，勿手改） | `worlds/models/.gen/`（start_sim_4uav.sh 由上面两个模板 sed 生成） |
 | OpenVINS 估计器参数（特征 150、max_clones 11、静止初始化等） | `src/uav_localization/config/openvins_sim/estimator_config.yaml` |
 | IMU 噪声（由 x500_base 的 SDF 噪声换算） | `.../openvins_sim/kalibr_imu_chain.yaml` |
 | 相机内外参（fx=fy=337.22、T_imu_cam 与挂点严格对应） | `.../openvins_sim/kalibr_imucam_chain.yaml` |
@@ -391,8 +404,9 @@ ros2 run uav_localization compare_vio_gt.py --ros-args -p uav_id:=1
   compare_vio_gt.py 订阅 PX4 话题必须 BEST_EFFORT + **VOLATILE**
   （MicroXRCEAgent 发布是 VOLATILE；订阅请求 TRANSIENT_LOCAL 会被 DDS
   判不兼容，一条都收不到且无报错）。当前脚本已修复，勿改回
-- 桥接报 `Unable to find topic` / 终端 B 一直等相机：仿真是普通模式起的
-  （没加 `VIO_UAV=1`），或终端 B 与仿真不在同一 `GZ_PARTITION`
+- 桥接报 `Unable to find topic` / 终端 B 一直等相机：仿真没带相机启动
+  （默认 `ALL_STEREO=1` 已带；若显式设了 `ALL_STEREO=0` 需再加 `VIO_UAV=N`），
+  或终端 B 与仿真不在同一 `GZ_PARTITION`
   （`run_openvins_sim.sh` 会自动 source `/tmp/rm27_gz_env.sh`，手动调试时别忘了）
 - OpenVINS 终端刷 `cv_bridge exception`：相机像素格式不匹配，d435i
   用的是 `L_INT8`（桥接后为 mono8），改过相机格式的话同步改回
