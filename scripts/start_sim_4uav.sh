@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================
 # 启动 4 机 PX4 SITL + Gazebo(RM2025 赛场) + MicroXRCEAgent
+#   可选：WITH_RVIZ=1 时同步启动打点导航栈 + RViz
+#   （四机各自一个 2D Nav Goal 工具，独立打点互不干扰）
 #
 # 架构（PX4 官方多机仿真的解耦版）：
 #   - 本脚本直接启动 gz-server / gz-gui，再启动 NUM_UAVS 个
@@ -311,6 +313,20 @@ echo "[sim] 启动 MicroXRCEAgent（udp4:8888，自动接入全部实例）"
 MicroXRCEAgent udp4 -p 8888 &
 PIDS+=($!)
 
+# 可选：WITH_RVIZ=1 时同步拉起打点导航栈（offboard×N + goal_planner×N + RViz）
+if [ "${WITH_RVIZ:-0}" = "1" ]; then
+    if [ -f "$WS_DIR/install/setup.bash" ]; then
+        echo "[sim] WITH_RVIZ=1：启动打点导航栈 + RViz（ros2 launch uav_bringup goal_nav.launch.py）"
+        source /opt/ros/humble/setup.bash
+        # shellcheck disable=SC1091
+        source "$WS_DIR/install/setup.bash"
+        ros2 launch uav_bringup goal_nav.launch.py &
+        PIDS+=($!)
+    else
+        echo "[sim] 警告：WITH_RVIZ=1 但未找到 install/setup.bash，请先在 $WS_DIR 执行 colcon build，已跳过 RViz"
+    fi
+fi
+
 echo ""
 if [ "$missing" -eq 0 ]; then
     echo "[sim] $NUM_UAVS 机仿真启动完成，全部模型已确认加载。"
@@ -319,6 +335,7 @@ else
 fi
 echo "[sim] 验证：ros2 topic list | grep px4_"
 echo "[sim] 另开终端执行任务：./scripts/run_swarm.sh"
+echo "[sim] 想仿真+RViz 打点一把起：WITH_RVIZ=1 ./scripts/start_sim_4uav.sh"
 echo "[sim] Ctrl+C 或 ./scripts/stop_sim.sh 结束仿真"
 echo "[sim] 别的终端手动用 gz topic/gz service 调试前，先执行：source /tmp/rm27_gz_env.sh"
 echo "[sim] 如遇界面空白/缺机等异常，请把 /tmp/gz_server.log /tmp/gz_gui.log /tmp/px4_instance_*.log 发出来"
