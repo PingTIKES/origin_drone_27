@@ -74,7 +74,7 @@ INIT(发心跳) → ARMING(切Offboard+解锁) → TAKEOFF(升到指定高度) �
 - Offboard 心跳必须 ≥2 Hz，否则飞控 0.5 秒后自动退出 Offboard（本节点定时器保证 10 Hz）
 - 切换 Offboard 模式前需先发约 1 秒心跳，飞控才接受
 - 多机时 MAVLink sysid = SITL 实例号 + 1（节点内自动换算）
-- px4_msgs 话题必须 BEST_EFFORT + TRANSIENT_LOCAL QoS（已封装为 `px4_qos()`）
+- px4_msgs 话题必须 BEST_EFFORT + **VOLATILE** QoS（已封装为 `px4_qos()`）；曾误用 TRANSIENT_LOCAL，与 Agent 的 VOLATILE 发布不兼容导致全链路静默无数据，已修复
 
 ### 2.3 uav_swarm —— 集群调度（"指挥官"，只运行一个实例）
 
@@ -416,6 +416,7 @@ ros2 topic pub /uav3/command std_msgs/msg/String "{data: 'land'}" -1
 | --- | --- |
 | 编译 Agent 报「无效引用：2.12.x」 | v2.4.2 依赖的 Fast-DDS 分支已被官方删除：`git checkout v2.4.3` 后删 `build/` 重新编译（setup_env.sh 已修复） |
 | `ros2 topic list` 没有 px4 话题 | Agent 没连上：看终端 A 输出；`tail /tmp/px4_instance_1.log` 查 PX4 日志 |
+| 4 架飞机全不起飞、`/uavN/state` 一直是 INIT、RViz 里标记不动 | px4_qos durability 误用 TRANSIENT_LOCAL（旧版代码）：Agent 发布是 VOLATILE，QoS 不兼容导致所有 PX4 订阅静默无数据，offboard 节点收不到位置永远停在 INIT。`git pull` 后 `colcon build` 并重启 launch 即可（当前代码已修为 VOLATILE，勿改回） |
 | 飞机不起飞、卡在 ARMING | 心跳没通：确认 launch 是在 `start_sim_4uav.sh` **之后**启动；检查 offboard 心跳频率是否 ≈10 Hz |
 | Gazebo 里飞机数量不够（如只有 1~3 架） | 多为 gz-server 忙时模型创建失败导致 PX4 实例退出：start_sim_4uav.sh 已将 gz-server 与 PX4 解耦——先等世界就绪再错峰启动实例（实例自身无限重试创建请求），看门狗用世界 pose 信息流逐台确认并只重启已退出的实例；仍缺机时看终端 A 的 [sim] 汇总和 /tmp/px4_instance_N.log（勿用"杀掉重启"式脚本：PX4 禁止同名模型，撞名会让实例直接退出） |
 | 第二次启动 Gazebo 空白/没有场地 | 上一次仿真没退干净（除 gz-sim 后端外，官方确认 `gz sim -g` 的 ruby 启动器/GUI 也会残留），新旧 server 同时在线导致服务发现串台：start_sim_4uav.sh 启动前按 `gz[- ]sim` 统一匹配强清理，且每轮仿真用唯一 GZ_PARTITION 隔离（残留杀不净也不串台）；手动清理用 `./scripts/stop_sim.sh` 或 `pkill -9 -f "gz[- ]sim"`；仍空白请带上 /tmp/gz_server.log 与 /tmp/gz_gui.log 排查 |
@@ -432,7 +433,7 @@ ros2 topic pub /uav3/command std_msgs/msg/String "{data: 'land'}" -1
 1. **坐标系**：全部使用 PX4 本地 NED 系（北 x、东 y、下 z，**高度 = -z**）。
 集群公共坐标 = 各机本地坐标 + 出生点偏移（`spawn_offsets`，见第 2 步的出生点换算表）。
 2. **命名空间**：上层节点 `/uav1..4`；飞控桥 `/px4_1..4`（实例 i 的 sysid = i+1，已自动换算）。
-3. **QoS**：所有 px4_msgs 话题必须 BEST_EFFORT + TRANSIENT_LOCAL（代码内已封装）。
+3. **QoS**：所有 px4_msgs 话题必须 BEST_EFFORT + **VOLATILE**（代码内已封装）。MicroXRCEAgent 发布是 VOLATILE，订阅请求 TRANSIENT_LOCAL 会被 DDS 判不兼容、静默收不到任何消息——只有 RViz 地图这类 latched 发布才用 TRANSIENT_LOCAL。
 4. **Offboard 心跳**：`OffboardControlMode` + `TrajectorySetpoint` 必须 ≥2 Hz 持续发布。
 5. **安全接管**：仿真中 `Ctrl+C` 掉 run_swarm 后飞控会触发失控保护降落；
 实机务必保持 ET08 遥控器接管通道有效。
