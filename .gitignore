@@ -19,3 +19,6 @@ src/open_vins
 
 # 模型文件（体积大，单独分发）
 src/uav_perception/models/*.rknn
+
+# 全机 D435i 模式自动生成的 per-drone 模型（start_sim_4uav.sh 每次启动重新生成）
+worlds/models/.gen/
