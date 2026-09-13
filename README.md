@@ -152,12 +152,14 @@ WAIT_TAKEOFF → SEARCH → CONVERGE → RETURN → LAND → DONE
 - `launch/sim_swarm.launch.py`：**仿真一键启动**，拉起 4 个 offboard 节点 +
 4 个仿真检测器 + 集群调度 + 防碰监视，`num_uavs`/`sim` 等参数可调
 - `launch/goal_nav.launch.py`：**RViz 打点导航**（四机各自独立），4 机起飞悬停 +
-4 个 goal_planner（A*，命名空间 uavN 互不干扰）+ TF/标记桥 + RViz
-（工具栏 4 个 2D Nav Goal，从左到右对应 uav1~uav4）
+4 个 goal_planner（A*，命名空间 uavN 互不干扰）+ D435i 彩色图桥接
+（`cam_uavs` 指定机号，默认只桥 1 号机）+ TF/标记桥 + RViz
+（工具栏 4 个 2D Nav Goal，从左到右对应 uav1~uav4；Displays 面板勾选
+D435i_uavN 弹对应机的第一视角图像窗口）
 - `launch/uav_bringup.launch.py`：实机单机启动（`auto_takeoff` 默认 False，遥控器先验证）
 - `config/params.yaml`：**调参唯一入口**——搜索区域、高度层、防碰距离、
 仿真目标位置都在这一个文件里
-- `config/rm2025.rviz`：RViz 配置（场地地图/每机规划路径/无人机标记/4 个 2D Nav Goal 工具）
+- `config/rm2025.rviz`：RViz 配置（场地地图/每机规划路径/无人机标记/4 个 2D Nav Goal 工具/4 路 D435i 图像显示，默认只开 uav1）
 
 ---
 
@@ -288,6 +290,14 @@ WITH_RVIZ=1 ./scripts/start_sim_4uav.sh
 标记同色**（1 红 / 2 绿 / 3 蓝 / 4 黄），目标点标记也是同色圆柱。
 四机可同时各自执行不同打点任务，互不干扰。
 
+- **第一视角图像**：RViz 右下角默认已开 uav1 的 D435i 彩色画面
+（`/uav1/d435i/color/image_raw`）；想看别的机： Displays 面板勾选
+D435i_uavN，并用 `cam_uavs` 让 launch 桥接对应机的图像——
+`ros2 launch uav_bringup goal_nav.launch.py cam_uavs:="1 3"`
+（默认只桥 1 号机；每路 1280×720@30 原始图约 79 MB/s，8GB 机器别贪多，
+`cam_uavs:="0"` 完全关闭桥接）。**手动在另一个终端起 goal_nav 时，
+先 `source /tmp/rm27_gz_env.sh`**，否则桥接连不上本轮仿真分区、图像窗口全黑
+（WITH_RVIZ=1 一把起的方式自动继承，无需此步）
 - 规划状态：`ros2 topic echo /uav1/goal_state`（EXECUTING/REACHED/NO_PATH，每机一个）
 - 打在了障碍上：自动吸附到最近空闲点并打印警告
 - **不要与 `run_swarm.sh` 同时跑**——两者都会给 `/uavN/waypoint` 发航点会互抢
@@ -451,6 +461,7 @@ ros2 topic pub /uav3/command std_msgs/msg/String "{data: 'land'}" -1
 | 某机不跟航点 | 确认航点发到了该机的命名空间 `/uavN/waypoint`，且坐标是该机**本地系**（公共系坐标需减出生点偏移） |
 | RViz 打开后看不到地图/无人机 | 确认是 `goal_nav.launch.py` 启动的（它才发 `/field_map` 和 `/uav_markers`）；Fixed Frame 必须是 `map`；地图话题 QoS 需 Reliable+Transient Local（rm2025.rviz 已配好） |
 | 打点没反应 | 确认选对工具栏按钮（从左到右 uav1~uav4，悬停可看话题名）；`ros2 topic echo /uav1/goal_pose` 确认 RViz 发出去了；`ros2 topic echo /uav1/goal_state` 看状态；NO_PATH 说明起终点被障碍封死，看 goal_planner 终端日志 |
+| RViz 图像窗口全黑 | 按序查：`ros2 topic hz /uav1/d435i/color/image_raw` 有没有频率——没有则桥接没生效（goal_nav 是否带 cam_uavs；手动起 launch 时忘了 `source /tmp/rm27_gz_env.sh`；仿真是否带相机启动 ALL_STEREO=1）；有频率还黑则看 Displays 面板 D435i_uavN 是否勾选 |
 
 ## 6. 关键约定
 
