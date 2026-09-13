@@ -20,8 +20,17 @@
 #   - 4 台无人机出生在启动区四周的停机坪上（见 SPAWN_POSES）
 #   - 想回到简化几何场地：PX4_WORLD=rm2025_field ./start_sim_4uav.sh
 #
-# OpenVINS 仿真测试（双目 VIO）：
-#   VIO_UAV=1 ./start_sim_4uav.sh  —— 1 号机改用 x500_stereo 模型
+# 全机 D435i（ALL_STEREO=1，默认）：
+#   四机全部挂载 D435i（双目红外 + RGB + 深度 + 内置 IMU），话题按机独立：
+#   /uavN/vio_cam0|1/image、/uavN/d435i/color|depth、/uavN/d435i/imu。
+#   相机模型由本脚本启动时按机号从 worlds/models/d435i 模板生成到
+#   worlds/models/.gen/（单源维护，改模板即可，.gen 不要手动改）。
+#   VIO 桥接：另开终端 ./scripts/run_openvins_sim.sh
+#   渲染压力大（8GB 内存/核显）时回退旧模式：
+#   ALL_STEREO=0 VIO_UAV=1 ./start_sim_4uav.sh（仅 1 号机带相机）
+#
+# OpenVINS 仿真测试（双目 VIO，单机模式）：
+#   ALL_STEREO=0 VIO_UAV=1 ./start_sim_4uav.sh  —— 1 号机改用 x500_stereo 模型
 #   （前置双目 640x480@30 灰度，其余机不变；飞控侧无需任何改动）。
 #   仿真起来后再另开终端执行 ./scripts/run_openvins_sim.sh
 #
@@ -74,6 +83,7 @@ MODEL="${PX4_MODEL:-gz_x500}"        # 可换 gz_x500_depth 等带相机模型
 AUTOSTART=4001                        # gz_x500 对应 airframe
 WORLD="${PX4_WORLD:-rmuc_2025_field}" # 简化场地：PX4_WORLD=rm2025_field；空场地：default
 VIO_UAV="${VIO_UAV:-0}"               # >0 时该号机改用 gz_x500_stereo（前置双目，OpenVINS 测试用）
+ALL_STEREO="${ALL_STEREO:-1}"         # 1=四机全部挂 D435i（话题按机独立，默认）；0=仅 VIO_UAV 单机
 
 # 工作空间根目录（本脚本位于 <ws>/scripts/）
 WS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -156,6 +166,32 @@ if [ -n "${GZ_SIM_RESOURCE_PATH:-}" ]; then
 else
     export GZ_SIM_RESOURCE_PATH="$PX4_DIR/Tools/simulation/gz/models"
 fi
+# ---- 全机 D435i：按机号生成独立话题的相机/载机模型（模板单源维护） ----
+if [ "$ALL_STEREO" = "1" ]; then
+    VIO_UAV=0   # 全机带相机，单机模式自动失效
+    GEN_DIR="$WS_DIR/worlds/models/.gen"
+    for i in $(seq 1 "$NUM_UAVS"); do
+        mkdir -p "$GEN_DIR/d435i_uav$i" "$GEN_DIR/x500_stereo_uav$i"
+        sed -e "s|<name>d435i</name>|<name>d435i_uav$i</name>|" \
+            "$WS_DIR/worlds/models/d435i/model.config" > "$GEN_DIR/d435i_uav$i/model.config"
+        sed -e "s|model name='d435i'|model name='d435i_uav$i'|" \
+            -e "s|d435i/base_link|d435i_uav$i/base_link|g" \
+            -e "s|/vio_cam0/image|/uav$i/vio_cam0/image|g" \
+            -e "s|/vio_cam1/image|/uav$i/vio_cam1/image|g" \
+            -e "s|/d435i/|/uav$i/d435i/|g" \
+            "$WS_DIR/worlds/models/d435i/model.sdf" > "$GEN_DIR/d435i_uav$i/model.sdf"
+        sed -e "s|<name>x500_stereo</name>|<name>x500_stereo_uav$i</name>|" \
+            "$WS_DIR/worlds/models/x500_stereo/model.config" > "$GEN_DIR/x500_stereo_uav$i/model.config"
+        sed -e "s|model name='x500_stereo'|model name='x500_stereo_uav$i'|" \
+            -e "s|model://d435i|model://d435i_uav$i|g" \
+            -e "s|d435i/base_link|d435i_uav$i/base_link|g" \
+            "$WS_DIR/worlds/models/x500_stereo/model.sdf" > "$GEN_DIR/x500_stereo_uav$i/model.sdf"
+    done
+    export GZ_SIM_RESOURCE_PATH="$GEN_DIR:$GZ_SIM_RESOURCE_PATH"
+    echo "[sim] ALL_STEREO=1：$NUM_UAVS 机全部挂载 D435i（模型生成于 $GEN_DIR，"
+    echo "[sim]   话题 /uavN/vio_cam0|1/image、/uavN/d435i/color|depth、/uavN/d435i/imu）"
+fi
+
 # 每轮仿真使用唯一的 Gazebo 传输分区（服务发现按分区隔离）：
 # 即使上一次的进程杀不干净，新旧两轮也互相不可见，杜绝串台
 export GZ_PARTITION="${GZ_PARTITION:-rm27_$$}"
@@ -199,7 +235,9 @@ start_uav() {
     local POSE="${SPAWN_POSES[$((i-1))]:-0,0}"
     # VIO 测试：仅指定号机换用带前置双目的 x500_stereo（airframe 不变）
     local M="$MODEL"
-    if [ "$VIO_UAV" = "$i" ]; then
+    if [ "$ALL_STEREO" = "1" ]; then
+        M="gz_x500_stereo_uav$i"
+    elif [ "$VIO_UAV" = "$i" ]; then
         M="gz_x500_stereo"
         echo "[sim] 实例 $i 使用双目模型 x500_stereo（OpenVINS 测试）"
     fi
@@ -339,7 +377,10 @@ echo "[sim] 想仿真+RViz 打点一把起：WITH_RVIZ=1 ./scripts/start_sim_4ua
 echo "[sim] Ctrl+C 或 ./scripts/stop_sim.sh 结束仿真"
 echo "[sim] 别的终端手动用 gz topic/gz service 调试前，先执行：source /tmp/rm27_gz_env.sh"
 echo "[sim] 如遇界面空白/缺机等异常，请把 /tmp/gz_server.log /tmp/gz_gui.log /tmp/px4_instance_*.log 发出来"
-if [ "$VIO_UAV" -gt 0 ] 2>/dev/null; then
+if [ "$ALL_STEREO" = "1" ]; then
+    echo "[sim] 全机 D435i 模式：桥接+VIO 另开终端 ./scripts/run_openvins_sim.sh"
+    echo "[sim]   （默认 OpenVINS 只跑 uav1；多机同跑 VIO_UAVS=\"1 3\" ./scripts/run_openvins_sim.sh）"
+elif [ "$VIO_UAV" -gt 0 ] 2>/dev/null; then
     echo "[sim] VIO 测试模式：uav$VIO_UAV 为 x500_stereo，相机话题 /vio_cam0/image /vio_cam1/image"
     echo "[sim] 启动 OpenVINS 链路：另开终端执行 ./scripts/run_openvins_sim.sh"
 fi
