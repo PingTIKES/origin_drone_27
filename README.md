@@ -105,6 +105,7 @@ WAIT_TAKEOFF → SEARCH → CONVERGE → RETURN → LAND → DONE
 | --- | --- |
 | `sim_target_detector.py` | **仿真专用**：目标真值（默认 NED (-9,2,0)，红方半场，对应世界中绿色立柱）+ 高斯噪声，本机进入 8 m 探测圈时以 5 Hz 发布 DetectionArray |
 | `yolo_detector.py` | **实机桩代码**：接口与仿真检测器完全一致，注释中标注了 RK3576 NPU 上加载 `yolov5s.rknn`、RKNN 推理、NMS 后处理的替换位置（参考 `airockchip/rknn_model_zoo`） |
+| `stereo_depth_node.py` | **深度图→障碍点云**（仿真/实机同一份）：D435i 深度图反投影+抽稀（320×240@5Hz），输出机体 FLU 系 PointCloud2 `/uavN/obstacles` 喂给 VFH+ 避障；实机 remap 到 realsense 的深度话题即可 |
 
 ### 2.5 uav_planning —— 规划与安全
 
@@ -115,17 +116,21 @@ WAIT_TAKEOFF → SEARCH → CONVERGE → RETURN → LAND → DONE
   `worlds/rm2025_field.sdf` 对应的内置解析障碍。8 连通 A* + 视线拉直平滑。
   实机演进时接口不变，障碍来源换成 D435i 深度点云局部建图即可
 - `goal_planner.py`：**RViz 打点导航**（每机一个实例，命名空间 `uavN`）。
-  订阅本机 "2D Nav Goal" 工具发出的 `/uavN/goal_pose`，A* 规划后把路径拆成
-  航点序列依次下发给本机 offboard 节点；发布 `/uavN/planned_path` 路径、
-  `/goal_marker` 目标标记（ns=goal_uavN 按机着色）；`/field_map` 占据栅格
-  只由 `publish_map=True` 的实例（uav1）发布，话题全局共享
+  订阅本机 "2D Nav Goal" 工具发出的 `/uavN/goal_pose`。两种模式
+  （参数 `use_field_map`）：True=先验场地栅格 A* 规划拆航点（调试用）；
+  **False=无先验地图直航**（比赛规则，goal_nav 默认），局部避障交给
+  VFH+ 感知链路。发布 `/uavN/planned_path` 路径、`/goal_marker` 目标标记
+  （ns=goal_uavN 按机着色）；`/field_map` 仅先验模式由 publish_map=True 的实例发
 - `pose_tf_publisher.py`：**位姿→TF+标记桥**。把 4 机的 PX4 本地 NED 位置换算到
   公共系，广播 `map->uavN` TF 并发布机身/机头/机号标记供 RViz 显示
 - `collision_monitor.py`：**集群级防碰兜底**。10 Hz 两两计算机间 3D 距离：
 <1.5 m 发告警到 `/swarm/collision_warning`；<0.8 m 直接沿连线反向把两机各拉开 1 m
 （2 秒冷却，避免与调度器抢航点）。仿真靠高度分层基本不触发，实机是安全底线
-- `vfh_planner.py`：VFH+ 避障**模板**（实机接双目深度点云用），当前实现为
-"直通 + 斥力修正"，注释里写了升级完整 VFH+（直方图阈值化→候选谷→代价选向）的路径
+- `vfh_planner.py`：**VFH+ 局部避障**（已实现）。订阅 `/uavN/obstacles`
+  障碍点云（stereo_depth_node 机体 FLU 点云）+ 本机 PX4 位姿，极直方图
+  （72 bin/5°，同高度层 ±1m 过滤）→ 阈值化 → 候选谷选向，把 `waypoint_in`
+  修正为 `waypoint` 发给 offboard；目标方向开放则直通，360° 全堵原地悬停。
+  升级路径：换 VFH+ 原文的障碍密度直方图 + 双阈值迟滞
 
 ### 2.6 uav_mission —— 行为树（实机任务层）
 
@@ -152,14 +157,15 @@ WAIT_TAKEOFF → SEARCH → CONVERGE → RETURN → LAND → DONE
 - `launch/sim_swarm.launch.py`：**仿真一键启动**，拉起 4 个 offboard 节点 +
 4 个仿真检测器 + 集群调度 + 防碰监视，`num_uavs`/`sim` 等参数可调
 - `launch/goal_nav.launch.py`：**RViz 打点导航**（四机各自独立），4 机起飞悬停 +
-4 个 goal_planner（A*，命名空间 uavN 互不干扰）+ D435i 彩色图桥接
-（`cam_uavs` 指定机号，默认只桥 1 号机）+ TF/标记桥 + RViz
+4 个 goal_planner（**use_field_map=false 无先验直航**）+ D435i 彩色/深度图桥接
+（`cam_uavs` 指定机号，默认只桥 1 号机）+ 感知避障链
+（stereo_depth_node + vfh_planner，仅 cam_uavs 的机）+ TF/标记桥 + RViz
 （工具栏 4 个 2D Nav Goal，从左到右对应 uav1~uav4；Displays 面板勾选
-D435i_uavN 弹对应机的第一视角图像窗口）
+D435i_uavN / Obstacles_uavN 看对应机的第一视角与障碍点云）
 - `launch/uav_bringup.launch.py`：实机单机启动（`auto_takeoff` 默认 False，遥控器先验证）
 - `config/params.yaml`：**调参唯一入口**——搜索区域、高度层、防碰距离、
 仿真目标位置都在这一个文件里
-- `config/rm2025.rviz`：RViz 配置（场地地图/每机规划路径/无人机标记/4 个 2D Nav Goal 工具/4 路 D435i 图像显示，默认只开 uav1）
+- `config/rm2025.rviz`：RViz 配置（场地地图/每机规划路径/无人机标记/4 个 2D Nav Goal 工具/4 路 D435i 图像 + 4 路障碍点云显示，默认只开 uav1）
 
 ---
 
@@ -290,6 +296,12 @@ WITH_RVIZ=1 ./scripts/start_sim_4uav.sh
 标记同色**（1 红 / 2 绿 / 3 蓝 / 4 黄），目标点标记也是同色圆柱。
 四机可同时各自执行不同打点任务，互不干扰。
 
+- **无先验地图避障（比赛规则）**：goal_nav 默认 `use_field_map=false`——
+  打点不再走场地离线栅格 A*，而是直航 + 机载感知避障：D435i 深度图 →
+  `stereo_depth_node`（320×240@5Hz 机体点云 `/uavN/obstacles`）→
+  `vfh_planner`（VFH+ 候选谷选向）→ offboard。**只有 `cam_uavs` 里的机
+  有避障**（避障依赖深度图桥接，默认只有 uav1）；RViz 里 Obstacles_uav1
+  显示（红色点）就是 VFH 实际看到的障碍，想绕障测试就往资源岛方向打点
 - **第一视角图像**：RViz 右下角默认已开 uav1 的 D435i 彩色画面
 （`/uav1/d435i/color/image_raw`）；想看别的机： Displays 面板勾选
 D435i_uavN，并用 `cam_uavs` 让 launch 桥接对应机的图像——
@@ -462,6 +474,7 @@ ros2 topic pub /uav3/command std_msgs/msg/String "{data: 'land'}" -1
 | RViz 打开后看不到地图/无人机 | 确认是 `goal_nav.launch.py` 启动的（它才发 `/field_map` 和 `/uav_markers`）；Fixed Frame 必须是 `map`；地图话题 QoS 需 Reliable+Transient Local（rm2025.rviz 已配好） |
 | 打点没反应 | 确认选对工具栏按钮（从左到右 uav1~uav4，悬停可看话题名）；`ros2 topic echo /uav1/goal_pose` 确认 RViz 发出去了；`ros2 topic echo /uav1/goal_state` 看状态；NO_PATH 说明起终点被障碍封死，看 goal_planner 终端日志 |
 | RViz 图像窗口全黑 | 按序查：`ros2 topic hz /uav1/d435i/color/image_raw` 有没有频率——没有则桥接没生效（goal_nav 是否带 cam_uavs；手动起 launch 时忘了 `source /tmp/rm27_gz_env.sh`；仿真是否带相机启动 ALL_STEREO=1）；有频率还黑则看 Displays 面板 D435i_uavN 是否勾选 |
+| 打点直撞障碍不绕飞 | 该机不在 cam_uavs 里（只有桥了深度图的机才有避障链）；或链路断了：`ros2 topic hz /uav1/obstacles`（应≈5Hz）→ `/uav1/waypoint_in`（应≈5Hz）→ `/uav1/waypoint`，逐段查；vfh 日志会打"目标方位被堵，绕向 xx°" |
 
 ## 6. 关键约定
 
