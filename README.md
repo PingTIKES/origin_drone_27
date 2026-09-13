@@ -2,7 +2,7 @@
 
 基于 `无人机27赛季框架.docx` 搭建的 **ROS2 Humble + PX4 SITL + Gazebo** 四机集群代码工作空间。
 目标：在个人电脑上（不要任何真飞机）直接完成 **4 架小型无人机集群的仿真调试**，
-逻辑验证后平滑迁移到 RK3566 实机。
+逻辑验证后平滑迁移到 LubanCat-3（RK3576）实机。
 
 ---
 
@@ -14,7 +14,7 @@
 - [4. 运行中调试命令](#4-运行中调试命令)
 - [5. 常见排错](#5-常见排错)
 - [6. 关键约定](#6-关键约定)
-- [7. 迁移实机（RK3566）清单](#7-迁移实机rk3566清单)
+- [7. 迁移实机（LubanCat-3 / RK3576）清单](#7-迁移实机lubancat-3--rk3576清单)
 
 ---
 
@@ -104,7 +104,7 @@ WAIT_TAKEOFF → SEARCH → CONVERGE → RETURN → LAND → DONE
 | 节点 | 用途 |
 | --- | --- |
 | `sim_target_detector.py` | **仿真专用**：目标真值（默认 NED (-9,2,0)，红方半场，对应世界中绿色立柱）+ 高斯噪声，本机进入 8 m 探测圈时以 5 Hz 发布 DetectionArray |
-| `yolo_detector.py` | **实机桩代码**：接口与仿真检测器完全一致，注释中标注了 RK3566 上加载 `yolov5s.rknn`、RKNN 推理、NMS 后处理的替换位置（参考 `airockchip/rknn_model_zoo`） |
+| `yolo_detector.py` | **实机桩代码**：接口与仿真检测器完全一致，注释中标注了 RK3576 NPU 上加载 `yolov5s.rknn`、RKNN 推理、NMS 后处理的替换位置（参考 `airockchip/rknn_model_zoo`） |
 
 ### 2.5 uav_planning —— 规划与安全
 
@@ -164,7 +164,7 @@ WAIT_TAKEOFF → SEARCH → CONVERGE → RETURN → LAND → DONE
 ## 3. 仿真环境开启流程（详细版）
 
 > 前提：一台 **x86 电脑、Ubuntu 22.04、ROS2 Humble、≥8GB 内存、≥20GB 磁盘**
-> （不是在 RK3566 上跑）。
+> （不是在 RK3576 上跑）。
 
 ### 第 0 步：一次性环境安装（约 30~60 分钟，只做一次）
 
@@ -232,7 +232,7 @@ Gazebo 窗口中出现的是 **RMUC2025 真实赛场模型**（29.2 m × 16.2 m 
 > 仅复用其 RMUC2025 全场网格模型（`worlds/models/rmuc_2025/`，STL + 模型定义，
 > 原插件均已移除），世界文件 `worlds/rmuc_2025_field.sdf` 按 PX4 官方模板补齐
 > gz-garden 系统插件（NavSat/AirPressure/ApplyLinkWrench 等）。若你需要他们
-> 的地面对抗逻辑，可用他们的 Docker 镜像单独跑原仿真器。
+> 的地面机器人对抗逻辑，可用他们的 Docker 镜像单独跑原仿真器。
 >
 > **注意**：Git 仓库不含 5.7 MB 的场地网格二进制（zip 发行包已内含）。
 > clone 后首次 `./scripts/start_sim_4uav.sh` 会自动运行
@@ -462,9 +462,9 @@ ros2 topic pub /uav3/command std_msgs/msg/String "{data: 'land'}" -1
 5. **安全接管**：仿真中 `Ctrl+C` 掉 run_swarm 后飞控会触发失控保护降落；
 实机务必保持 ET08 遥控器接管通道有效。
 
-## 7. 迁移实机（RK3566）清单
+## 7. 迁移实机（LubanCat-3 / RK3576）清单
 
-- [ ] `setup_env.sh` 在 RK3566 上只执行第 1、4、6 步（**不要**装 Gazebo/PX4 SITL）
+- [ ] `setup_env.sh` 在 RK3576 上只执行第 1、4、6 步（**不要**装 Gazebo/PX4 SITL）
 - [ ] 飞控串口 ↔ uXRCE-DDS Agent：`MicroXRCEAgent serial --dev /dev/ttyS1 -b 921600`
 - [ ] 安装 D435i 驱动：`sudo apt install ros-humble-realsense2-camera`，启动命令见
 `uav_localization/config/openvins_params.yaml` 头部注释（VIO 模式关深度流）
@@ -472,5 +472,8 @@ ros2 topic pub /uav3/command std_msgs/msg/String "{data: 'land'}" -1
 输出 `/uavN/odom` 转 `vehicle_visual_odometry` 喂给 EKF2（`EKF2_EV_CTRL=15`）
 - [ ] 用 `yolo_detector.py` 替换 `sim_target_detector.py`（加载 `models/yolov5s.rknn`；
 **D435i 自带 RGB，检测用彩色图 `/camera/camera/color/image_raw`（也可退回左红外灰度）**）
-- [ ] 集群通信改用 WiFi + CycloneDDS
+- [ ] 集群通信：WiFi + CycloneDDS 单播，**完整方案在 `deploy/`**：
+  - `deploy/cyclonedds.xml`：五台机器统一 DDS 配置（Domain 42、禁多播、显式 Peers）
+  - `deploy/实机网络配置.md`：静态 IP（地面站 .10.1、板 .10.11~.14）、netplan 示例、/etc/hosts、chrony 时间同步、带宽纪律、验证顺序
+  - `deploy/start_onboard.sh`：每板一键启动 `./deploy/start_onboard.sh <机号>`（机号 = IP 末位 −10；首飞 `AUTO_TAKEOFF=0`）
 - [ ] 实机首飞用 `uav_bringup.launch.py`（`auto_takeoff:=False`，遥控器接管验证后再放开）
