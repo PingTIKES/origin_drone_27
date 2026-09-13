@@ -20,6 +20,7 @@ setup(
         'console_scripts': [
             'sim_target_detector = uav_perception.sim_target_detector:main',
             'yolo_detector = uav_perception.yolo_detector:main',
+            'stereo_depth_node = uav_perception.stereo_depth_node:main',
         ],
     },
 )
