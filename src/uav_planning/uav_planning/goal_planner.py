@@ -38,9 +38,11 @@ from uav_planning.field_map import FieldMap
 
 
 def px4_qos() -> QoSProfile:
+    # MicroXRCEAgent 转发 PX4 话题用的是 BEST_EFFORT + VOLATILE；
+    # 订阅请求 TRANSIENT_LOCAL 会被 DDS 判不兼容，静默零消息（无报错）
     return QoSProfile(
         reliability=QoSReliabilityPolicy.BEST_EFFORT,
-        durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+        durability=QoSDurabilityPolicy.VOLATILE,
         history=QoSHistoryPolicy.KEEP_LAST,
         depth=1,
     )
