@@ -10,6 +10,7 @@
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>sensor_msgs_py</depend>
   <depend>px4_msgs</depend>
   <depend>uav_msgs</depend>
 
