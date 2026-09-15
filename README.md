@@ -306,7 +306,7 @@ WITH_RVIZ=1 ./scripts/start_sim_4uav.sh
 （`/uav1/d435i/color/image_raw`）；想看别的机： Displays 面板勾选
 D435i_uavN，并用 `cam_uavs` 让 launch 桥接对应机的图像——
 `ros2 launch uav_bringup goal_nav.launch.py cam_uavs:="1 3"`
-（默认只桥 1 号机；每路 1280×720@30 原始图约 79 MB/s，8GB 机器别贪多，
+（默认只桥 1 号机；仿真 RGB 已降级为 640×480@10 约 9 MB/s 每路，
 `cam_uavs:="0"` 完全关闭桥接）。**手动在另一个终端起 goal_nav 时，
 先 `source /tmp/rm27_gz_env.sh`**，否则桥接连不上本轮仿真分区、图像窗口全黑
 （WITH_RVIZ=1 一把起的方式自动继承，无需此步）
@@ -373,7 +373,7 @@ ros2 run uav_localization compare_vio_gt.py --ros-args -p uav_id:=1
 
 | 内容 | 文件 |
 |---|---|
-| D435i 五合一传感器（双目红外 640×480@30 基线 50mm hfov 87° + RGB 1280×720@30 hfov 69° + 深度 640×480@15 0.1~10m + IMU 200Hz，挂点 base_link (0.17,0,-0.06)） | `worlds/models/d435i/model.sdf` |
+| D435i 五合一传感器（双目红外 640×480@30 基线 50mm hfov 87° + RGB 640×480@10 hfov 69°（仿真降级，原为 1280×720@30） + 深度 640×480@15 0.1~10m + IMU 200Hz，挂点 base_link (0.17,0,-0.06)） | `worlds/models/d435i/model.sdf` |
 | x500 双目变体（merge x500 + 挂 d435i） | `worlds/models/x500_stereo/model.sdf` |
 | 全机挂载时的每机独立话题副本（启动时自动生成，勿手改） | `worlds/models/.gen/`（start_sim_4uav.sh 由上面两个模板 sed 生成） |
 | OpenVINS 估计器参数（特征 150、max_clones 11、静止初始化等） | `src/uav_localization/config/openvins_sim/estimator_config.yaml` |
@@ -473,6 +473,7 @@ ros2 topic pub /uav3/command std_msgs/msg/String "{data: 'land'}" -1
 | 某机不跟航点 | 确认航点发到了该机的命名空间 `/uavN/waypoint`，且坐标是该机**本地系**（公共系坐标需减出生点偏移） |
 | RViz 打开后看不到地图/无人机 | 确认是 `goal_nav.launch.py` 启动的（它才发 `/field_map` 和 `/uav_markers`）；Fixed Frame 必须是 `map`；地图话题 QoS 需 Reliable+Transient Local（rm2025.rviz 已配好） |
 | 打点没反应 | 确认选对工具栏按钮（从左到右 uav1~uav4，悬停可看话题名）；`ros2 topic echo /uav1/goal_pose` 确认 RViz 发出去了；`ros2 topic echo /uav1/goal_state` 看状态；NO_PATH 说明起终点被障碍封死，看 goal_planner 终端日志 |
+| RViz 订阅 D435i 图像后卡死/偶发 No Image | 图像带宽过大压垮 RViz 主线程（8GB+核显机器）：仿真 RGB 已降至 640×480@10（≈9MB/s/路），仍卡则：一次只勾一路图像显示、关掉 Gazebo GUI（HEADLESS=1）、RViz Frame Rate 降到 15；No Image 多为过载断流，负载降下即恢复，持续无图按上一条逐段查 |
 | RViz 图像窗口全黑 | 按序查：`ros2 topic hz /uav1/d435i/color/image_raw` 有没有频率——没有则桥接没生效（goal_nav 是否带 cam_uavs；手动起 launch 时忘了 `source /tmp/rm27_gz_env.sh`；仿真是否带相机启动 ALL_STEREO=1）；有频率还黑则看 Displays 面板 D435i_uavN 是否勾选 |
 | 打点直撞障碍不绕飞 | 该机不在 cam_uavs 里（只有桥了深度图的机才有避障链）；或链路断了：`ros2 topic hz /uav1/obstacles`（应≈5Hz）→ `/uav1/waypoint_in`（应≈5Hz）→ `/uav1/waypoint`，逐段查；vfh 日志会打"目标方位被堵，绕向 xx°" |
 
