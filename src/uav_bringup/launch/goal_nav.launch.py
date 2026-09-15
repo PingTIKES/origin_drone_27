@@ -11,8 +11,8 @@ RViz 打点导航一键启动（需先运行 scripts/start_sim_4uav.sh；
     每机：uav_planning/goal_planner（命名空间 uavN，订阅 /uavN/goal_pose；
           use_field_map=false 无先验地图直航，避障交给感知链路）
     相机：ros_gz_bridge 把 cam_uavs 指定机的 D435i 彩色图 + 深度图桥接成
-          ROS 话题（默认只桥 1 号机——彩色 1280×720@30 约 79 MB/s，
-          8GB 机器别贪多；cam_uavs:="0" 关闭桥接）
+          ROS 话题（默认只桥 1 号机——彩色已降级 640×480@10 约 9 MB/s；
+          cam_uavs:="0" 关闭桥接）
     避障（仅 cam_uavs 指定的机）：uav_perception/stereo_depth_node
           （深度图→机体障碍点云 /uavN/obstacles）+ uav_planning/vfh_planner
           （VFH+ 选向）。这些机的航点链路自动改道：
