@@ -26,6 +26,7 @@ from rclpy.node import Node
 
 from sensor_msgs.msg import Image, PointCloud2
 from sensor_msgs_py import point_cloud2
+from std_msgs.msg import Header
 
 
 class StereoDepthNode(Node):
@@ -102,8 +103,14 @@ class StereoDepthNode(Node):
         z_b = -y_o + self.cam_xyz[2]
 
         cloud = np.stack([x_b, y_b, z_b], axis=1)
-        out = point_cloud2.create_cloud_xyz32(msg.header, cloud)
-        out.header.frame_id = self.frame_id
+        # 时间戳必须重打成本机时钟：深度图头里是 Gazebo 仿真时间，
+        # 而 pose_tf_publisher 的 map->uavN TF 用系统时间，两个时钟
+        # 不一致会让 RViz 的 TF 缓存永远查不到对应时刻（报
+        # "earlier than all the data in the transform cache" 丢帧）
+        hdr = Header()
+        hdr.stamp = self.get_clock().now().to_msg()
+        hdr.frame_id = self.frame_id
+        out = point_cloud2.create_cloud_xyz32(hdr, cloud)
         self.pub.publish(out)
 
 
