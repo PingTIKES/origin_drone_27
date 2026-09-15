@@ -6,8 +6,9 @@
     - 双目红外灰度 640x480 @ 30Hz，基线 50mm，全局快门（仿真不建快门模型）
       水平视场 87 度（fx=fy=337.22, cx=320, cy=240，理想无畸变）
       高斯图像噪声 stddev=0.007（模拟真实 CMOS 读出噪声）
-    - RGB 彩色 1280x720 @ 30Hz，hfov 69.4 度（D435i RGB 约 69°x42°，
-      滚动快门，仿真不建模）——目标检测（YOLO）用
+    - RGB 彩色 640x480 @ 10Hz，hfov 69.4 度——仿真中仅供 RViz 监视
+      （检测走真值检测器；原为 1280x720@30，约 79MB/s/路会把 RViz 压垮，
+      故仿真降级；实机 RGB 规格在 rs_launch 里另配，与此无关）
     - 深度 640x480 @ 15Hz（模拟 D4 ASIC 硬算深度；真机走 USB2.0 时
       深度档位受限，15Hz 是对实机的保守对齐）——避障建图用
     - 内置 IMU（BMI055）200Hz，备用；OpenVINS 默认仍用机体 IMU
@@ -119,15 +120,18 @@
         <visualize>false</visualize>
       </sensor>
 
-      <!-- RGB 彩色：目标检测用（1280x720@30，hfov 69.4°） -->
+      <!-- RGB 彩色：仿真仅供 RViz 监视（640x480@10，hfov 69.4°） -->
       <sensor name='color' type='camera'>
         <pose>0 -0.015 0 -1.5707963 0 -1.5707963</pose>
         <topic>/d435i/color/image_raw</topic>
+        <!-- 仿真降级 640x480@10（原 1280x720@30 约 79MB/s/路，RViz 订阅即卡死）：
+             仿真检测走真值检测器不吃 RGB，彩色图仅供 RViz 监视；
+             实机 realsense 的 RGB 规格在 rs_launch 里另配，与本文件无关 -->
         <camera>
           <horizontal_fov>1.2110</horizontal_fov>
           <image>
-            <width>1280</width>
-            <height>720</height>
+            <width>640</width>
+            <height>480</height>
             <format>RGB_INT8</format>
           </image>
           <clip>
@@ -141,7 +145,7 @@
           </noise>
         </camera>
         <always_on>1</always_on>
-        <update_rate>30</update_rate>
+        <update_rate>10</update_rate>
         <visualize>false</visualize>
       </sensor>
 
