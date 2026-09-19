@@ -7,6 +7,10 @@
 > 真值目标或场地先验。旧 `run_swarm` / `goal_nav` / `run_openvins_sim` 流程
 > 保留作历史对照，不代表这一新的视觉闭环，勿与新入口混跑。
 > 当前验证为离线算法/适配器测试；Ubuntu SITL 和 RK3566 实测仍需执行验收。
+>
+> **四机混合集群仿真**：见 [SWARM_SIMULATION.md](SWARM_SIMULATION.md)。新版
+> `algorithm_swarm_sim.launch.py` 使用带 TTL 的任务指令、每机公共状态与轨迹意图、
+> 分布式预测避碰，并让任务目标经过各机自己的滚动地图和局部规划器。
 
 基于 `无人机27赛季框架.docx` 搭建的 **ROS2 Humble + PX4 SITL + Gazebo** 四机集群代码工作空间。
 目标：在个人电脑上（不要任何真飞机）直接完成 **4 架小型无人机集群的仿真调试**，

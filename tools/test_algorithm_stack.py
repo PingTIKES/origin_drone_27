@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 
 ROOT=Path(__file__).resolve().parents[1]
-for pkg in ('uav_mapping','uav_planning','uav_localization','uav_perception','uav_control'):
+for pkg in ('uav_mapping','uav_planning','uav_localization','uav_perception','uav_control','uav_swarm'):
     sys.path.insert(0,str(ROOT/'src'/pkg))
 from uav_mapping.rolling_grid import RollingGrid,body_to_nwu
 from uav_planning.local_grid_planner import LocalGridPlanner,bounded_step
@@ -23,9 +23,41 @@ from uav_perception.depth_geometry import decode_depth
 from uav_localization.vio_geometry import rotation,quaternion,convert
 from uav_localization.calibration import validate_config, read_yaml, write_opencv_yaml
 from uav_perception.stereo_matcher import StereoMatcher
+from uav_swarm.avoidance import (local_to_common,common_to_local,closest_approach,
+                                 select_safe_velocity)
 
 
 class GeometryTests(unittest.TestCase):
+    def test_swarm_transform_round_trip(self):
+        local=np.array([1.2,-.4,-2.])
+        common=local_to_common(local,(9.4,1.3),.37)
+        np.testing.assert_allclose(common_to_local(common,(9.4,1.3),.37),local,atol=1e-9)
+
+    def test_closest_approach(self):
+        t,d=closest_approach((2.,0.),(-1.,0.),3.)
+        self.assertAlmostEqual(t,2.);self.assertAlmostEqual(d,0.)
+
+    def test_velocity_avoidance_head_on(self):
+        neighbors=[dict(uav_id=2,position=(1.2,0.,0.),velocity=(-.5,0.,0.),age=0.,variance=.01)]
+        selected,feasible,margin=select_safe_velocity((0,0,0),(.5,0),(.5,0),neighbors,
+                                                       max_speed=.6,horizon=2.,base_radius=.5,
+                                                       delay_margin=0.,own_id=1)
+        self.assertTrue(feasible);self.assertGreater(margin,-1e-6)
+        self.assertGreater(np.linalg.norm(selected-np.array([.5,0.])),.05)
+
+    def test_velocity_avoidance_clear(self):
+        neighbors=[dict(uav_id=2,position=(0.,5.,0.),velocity=(0.,0.,0.),age=0.,variance=0.)]
+        selected,feasible,_=select_safe_velocity((0,0,0),(0,0),(.4,0),neighbors,
+                                                  max_speed=.6,horizon=2.,base_radius=.5,
+                                                  delay_margin=0.,own_id=1)
+        self.assertTrue(feasible);np.testing.assert_allclose(selected,[.4,0.])
+
+    def test_velocity_avoidance_uses_vertical_separation(self):
+        neighbors=[dict(uav_id=2,position=(.2,0.,-3.),velocity=(0.,0.,0.),age=0.,variance=0.)]
+        selected,feasible,_=select_safe_velocity((0,0,-2),(0,0),(.4,0),neighbors,
+                                                  max_speed=.6,horizon=2.,base_radius=.65,
+                                                  delay_margin=0.,own_id=1)
+        self.assertTrue(feasible);np.testing.assert_allclose(selected,[.4,0.])
     def test_unknown_blocked(self):
         p=LocalGridPlanner(np.full((20,20),-1),.1,(0,0))
         self.assertEqual(p.plan((.5,.5),(1.,1.))[0],'BLOCKED_START')
@@ -300,7 +332,8 @@ class AdapterTests(unittest.TestCase):
         modules['launch_ros.actions'].Node=lambda **kw:S(**kw)
         modules['ament_index_python.packages'].get_package_share_directory=lambda name:str(ROOT/'src'/name)
         context=dict(sim='true',uav_id='1',depth_source='software',calibration_dir='',bridge_clock='true',
-                     altitude='2.0',target_system='0',goal_source='manual',rviz='false',depth_scale='0.001')
+                     altitude='2.0',target_system='0',goal_source='manual',rviz='false',depth_scale='0.001',
+                     swarm='false',spawn_x='0.0',spawn_y='0.0',spawn_yaw='0.0')
         with tempfile.TemporaryDirectory() as directory,patch.dict(sys.modules,modules):
             spec=importlib.util.spec_from_file_location('algorithm_launch',ROOT/'src/uav_bringup/launch/algorithm.launch.py')
             module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
@@ -311,6 +344,10 @@ class AdapterTests(unittest.TestCase):
             _,cams,imu=validate_config(Path(directory)/'estimator_config.yaml')
             np.testing.assert_allclose(np.array(cams['cam0']['T_imu_cam'])[:3,3],[0,-.025,0])
             self.assertEqual(imu['update_rate'],200.)
+            context.update(swarm='true',goal_source='external',spawn_x='9.4',spawn_y='1.3')
+            with patch.object(module.tempfile,'mkdtemp',return_value=directory):swarm_nodes=module.setup(context)
+            swarm_names=[n.executable for n in swarm_nodes]
+            self.assertIn('swarm_agent',swarm_names);self.assertNotIn('local_goal',swarm_names)
 
     def test_package_xml(self):
         for path in (ROOT/'src').glob('*/package.xml'):ET.parse(path)

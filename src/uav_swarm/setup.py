@@ -19,6 +19,7 @@ setup(
     entry_points={
         'console_scripts': [
             'swarm_coordinator = uav_swarm.swarm_coordinator:main',
+            'swarm_agent = uav_swarm.swarm_agent:main',
         ],
     },
 )

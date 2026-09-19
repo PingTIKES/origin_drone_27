@@ -28,3 +28,5 @@ worlds/models/.gen/
 /algorithm_upgrade.zip
 /camera_geometry_fix.patch
 /local_core_benchmark.json
+/tmp/
+/output/

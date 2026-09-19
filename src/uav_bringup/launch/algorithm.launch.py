@@ -24,6 +24,7 @@ def setup(context):
     if not 1<=uid<=4:raise ValueError('uav_id must be 1..4')
     if not sim and int(arg('target_system'))<=0:raise ValueError('hardware requires explicit MAV_SYS_ID as target_system')
     ns=f'uav{uid}'
+    swarm=arg('swarm').lower()=='true'
     mode=arg('depth_source')
     if mode not in ('software','hardware'):raise ValueError('depth_source must be software or hardware')
     if sim and mode!='software':raise ValueError('algorithm simulation uses stereo matching, not ideal Gazebo depth')
@@ -90,7 +91,14 @@ def setup(context):
                   'frame_decimation':1 if mode=='software' else 3},depth_remaps))
     nodes.append(node('uav_mapping','rolling_mapper','rolling_mapper',
                       {'uav_id':uid,'px4_ns':f'px4_{uid}','cam_xyz':t_bc[:3,3].tolist()}))
-    nodes.append(node('uav_planning','local_navigator','local_navigator',{'uav_id':uid,'px4_ns':f'px4_{uid}'}))
+    nodes.append(node('uav_planning','local_navigator','local_navigator',
+                      {'uav_id':uid,'px4_ns':f'px4_{uid}',
+                       'safety_priority_time':.35 if swarm else 2.2}))
+    if swarm:
+        nodes.append(node('uav_swarm','swarm_agent','swarm_agent',
+                          {'uav_id':uid,'px4_ns':f'px4_{uid}',
+                           'offset_x':float(arg('spawn_x')),'offset_y':float(arg('spawn_y')),
+                           'yaw_offset':float(arg('spawn_yaw'))}))
     if arg('goal_source')=='manual':
         nodes.append(node('uav_planning','local_goal','local_goal',{'uav_id':uid,'cruise_alt':float(arg('altitude'))}))
     elif arg('goal_source')!='external':raise ValueError('goal_source must be manual or external')
@@ -109,6 +117,7 @@ def setup(context):
 def generate_launch_description():
     defaults=dict(sim='true',uav_id='1',depth_source='software',calibration_dir='',
                   bridge_clock='true',altitude='2.0',target_system='0',goal_source='manual',rviz='false',
+                  swarm='false',spawn_x='0.0',spawn_y='0.0',spawn_yaw='0.0',
                   cam0_topic='/camera/camera/infra1/image_rect_raw',cam1_topic='/camera/camera/infra2/image_rect_raw',
                   imu_topic='/camera/camera/imu',depth_topic='/camera/camera/depth/image_rect_raw',
                   depth_info_topic='/camera/camera/depth/camera_info',depth_scale='0.001')
