@@ -23,8 +23,10 @@ import numpy as np
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from uav_perception.depth_geometry import decode_depth
 
-from sensor_msgs.msg import Image, PointCloud2
+from sensor_msgs.msg import Image, PointCloud2, CameraInfo
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header
 
@@ -41,9 +43,13 @@ class StereoDepthNode(Node):
         self.declare_parameter('fy', 337.2)
         self.declare_parameter('cx', 319.5)
         self.declare_parameter('cy', 239.5)
-        # 安装外参平移（机体 FLU 系）：D435i 挂点 base_link 系 (0.17,0,-0.06) NED
-        # + 深度镜头在 d435i 内的 (0,0.025,0) NED → FLU (0.17, -0.025, 0.06)
-        self.declare_parameter('cam_xyz', [0.17, -0.025, 0.06])
+        # Gazebo base_link 已经是 FLU，不是 PX4 的 NED/FRD。
+        # 挂点 (0.17,0,-0.06) + 左红外/深度镜头 (0,0.025,0)。
+        self.declare_parameter('cam_xyz', [0.17, 0.025, -0.06])
+        self.declare_parameter('cam_rotation', [0., 0., 1., -1., 0., 0., 0., -1., 0.])
+        self.declare_parameter('depth_scale', .001)
+        self.declare_parameter('require_camera_info', False)
+        self.declare_parameter('preserve_stamp', False)  # legacy RViz uses wall time; algorithm.launch sets True
         self.declare_parameter('step', 2)              # 像素抽稀步长（2→320x240）
         self.declare_parameter('frame_decimation', 3)  # 每 k 帧处理 1 帧（15→5Hz）
         self.declare_parameter('min_range', 0.3)       # 盲区/噪声截断 m
@@ -56,12 +62,20 @@ class StereoDepthNode(Node):
         self.cx = float(self.get_parameter('cx').value)
         self.cy = float(self.get_parameter('cy').value)
         self.cam_xyz = [float(v) for v in self.get_parameter('cam_xyz').value]
+        self.rotation = np.array(self.get_parameter('cam_rotation').value).reshape(3,3)
+        if not np.allclose(self.rotation.T @ self.rotation, np.eye(3), atol=1e-5) or not np.isclose(np.linalg.det(self.rotation),1):
+            raise ValueError('cam_rotation must be a proper optical-to-body rotation')
+        self.depth_scale = float(self.get_parameter('depth_scale').value)
+        self.require_info = bool(self.get_parameter('require_camera_info').value)
+        self.preserve_stamp = bool(self.get_parameter('preserve_stamp').value)
+        self.info_shape = None
         self.step = int(self.get_parameter('step').value)
         self.decim = int(self.get_parameter('frame_decimation').value)
         self.min_r = float(self.get_parameter('min_range').value)
         self.max_r = float(self.get_parameter('max_range').value)
 
-        self.create_subscription(Image, 'd435i/depth/image_raw', self._cb_depth, 5)
+        self.create_subscription(Image, 'd435i/depth/image_raw', self._cb_depth, qos_profile_sensor_data)
+        self.create_subscription(CameraInfo, 'd435i/depth/camera_info', self._cb_info, qos_profile_sensor_data)
         self.pub = self.create_publisher(PointCloud2, 'obstacles', 5)
 
         self._count = 0
@@ -71,22 +85,31 @@ class StereoDepthNode(Node):
             f'(frame={self.frame_id}，step={self.step}，'
             f'每 {self.decim} 帧处理 1 帧)')
 
+    def _cb_info(self, msg):
+        # This node consumes rectified depth, hence P, not distorted-image K.
+        fx, fy, cx, cy = msg.p[0], msg.p[5], msg.p[2], msg.p[6]
+        if not np.all(np.isfinite([fx,fy,cx,cy])) or fx <= 0 or fy <= 0: return
+        self.fx, self.fy, self.cx, self.cy = fx,fy,cx,cy
+        self.info_shape = (msg.height,msg.width)
+
     def _cb_depth(self, msg: Image):
         self._count += 1
         if self._count % self.decim != 0:
             return
-        if msg.encoding not in ('32FC1',):
-            self.get_logger().warn(f'不支持的深度图编码 {msg.encoding}，需要 32FC1')
-            return
-
         h, w, s = msg.height, msg.width, self.step
+        if self.require_info and self.info_shape != (h,w): return
+        try:
+            depth = decode_depth(msg.data,h,w,msg.step,msg.encoding,msg.is_bigendian,self.depth_scale)
+        except ValueError as exc:
+            self.get_logger().warn(str(exc))
+            return
         if (h, w) not in self._grid_cache:
             v, u = np.mgrid[0:h:s, 0:w:s]
             self._grid_cache[(h, w)] = (v.astype(np.float32),
                                         u.astype(np.float32))
         v, u = self._grid_cache[(h, w)]
 
-        z = np.frombuffer(msg.data, dtype=np.float32).reshape(h, w)[::s, ::s]
+        z = depth[::s, ::s]
         valid = np.isfinite(z) & (z > self.min_r) & (z < self.max_r)
         if not np.any(valid):
             return
@@ -98,17 +121,13 @@ class StereoDepthNode(Node):
         x_o = (u - self.cx) * z / self.fx
         y_o = (v - self.cy) * z / self.fy
         # 光学系 → 机体 FLU（x 前、y 左、z 上）+ 安装平移
-        x_b = z + self.cam_xyz[0]
-        y_b = -x_o + self.cam_xyz[1]
-        z_b = -y_o + self.cam_xyz[2]
-
-        cloud = np.stack([x_b, y_b, z_b], axis=1)
+        cloud = np.stack([x_o, y_o, z], axis=1) @ self.rotation.T + self.cam_xyz
         # 时间戳必须重打成本机时钟：深度图头里是 Gazebo 仿真时间，
         # 而 pose_tf_publisher 的 map->uavN TF 用系统时间，两个时钟
         # 不一致会让 RViz 的 TF 缓存永远查不到对应时刻（报
         # "earlier than all the data in the transform cache" 丢帧）
         hdr = Header()
-        hdr.stamp = self.get_clock().now().to_msg()
+        hdr.stamp = msg.header.stamp if self.preserve_stamp else self.get_clock().now().to_msg()
         hdr.frame_id = self.frame_id
         out = point_cloud2.create_cloud_xyz32(hdr, cloud)
         self.pub.publish(out)

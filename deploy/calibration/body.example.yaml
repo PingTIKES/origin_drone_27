@@ -1,0 +1,6 @@
+# Replace null with measured homogeneous matrices. Null is deliberately rejected.
+# p_body_FLU = T_body_imu * p_camera_IMU
+T_body_imu: null
+# Only hardware depth mode needs this. Use the DEPTH optical reference,
+# NOT the independent RGB camera. Software stereo derives it from calibration.
+T_body_depth: null

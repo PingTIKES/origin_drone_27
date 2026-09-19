@@ -21,6 +21,8 @@ setup(
             'sim_target_detector = uav_perception.sim_target_detector:main',
             'yolo_detector = uav_perception.yolo_detector:main',
             'stereo_depth_node = uav_perception.stereo_depth_node:main',
+            'software_stereo = uav_perception.software_stereo_node:main',
+            'sensor_relay = uav_perception.sensor_relay:main',
         ],
     },
 )

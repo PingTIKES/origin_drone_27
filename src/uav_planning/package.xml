@@ -7,6 +7,8 @@
   <license>MIT</license>
 
   <depend>rclpy</depend>
+  <exec_depend>uav_mapping</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>

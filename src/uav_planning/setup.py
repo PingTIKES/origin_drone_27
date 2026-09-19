@@ -26,6 +26,8 @@ setup(
         'console_scripts': [
             'collision_monitor = uav_planning.collision_monitor:main',
             'vfh_planner = uav_planning.vfh_planner:main',
+            'local_navigator = uav_planning.local_navigator:main',
+            'local_goal = uav_planning.local_goal:main',
             'goal_planner = uav_planning.goal_planner:main',
             'pose_tf_publisher = uav_planning.pose_tf_publisher:main',
         ],

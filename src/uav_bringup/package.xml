@@ -13,6 +13,7 @@
   <exec_depend>uav_swarm</exec_depend>
   <exec_depend>uav_perception</exec_depend>
   <exec_depend>uav_planning</exec_depend>
+  <exec_depend>uav_mapping</exec_depend>
   <exec_depend>uav_mission</exec_depend>
   <exec_depend>uav_localization</exec_depend>
 

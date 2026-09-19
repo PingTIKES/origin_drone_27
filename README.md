@@ -1,5 +1,13 @@
 # RoboMaster 2027 四机集群仿真工作空间（uav_ws）
 
+> **新算法闭环入口（无雷达、249g 以下方案）**：见
+> [ALGORITHM_PIPELINE.md](ALGORITHM_PIPELINE.md)。使用 `start_algorithm_sim.sh`
+> + `algorithm.launch.py`：相机 IMU/双目 → OpenVINS → PX4；软件深度 →
+> 滚动地图 → A* / 有条件 VFH → 单一航点出口。仿真不向算法提供真值定位、
+> 真值目标或场地先验。旧 `run_swarm` / `goal_nav` / `run_openvins_sim` 流程
+> 保留作历史对照，不代表这一新的视觉闭环，勿与新入口混跑。
+> 当前验证为离线算法/适配器测试；Ubuntu SITL 和 RK3566 实测仍需执行验收。
+
 基于 `无人机27赛季框架.docx` 搭建的 **ROS2 Humble + PX4 SITL + Gazebo** 四机集群代码工作空间。
 目标：在个人电脑上（不要任何真飞机）直接完成 **4 架小型无人机集群的仿真调试**，
 逻辑验证后平滑迁移到 LubanCat-3（RK3576）实机。

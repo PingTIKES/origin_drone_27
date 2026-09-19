@@ -45,6 +45,10 @@ class CollisionMonitor(Node):
         self.declare_parameter('warn_dist', 1.5)
         self.declare_parameter('crit_dist', 0.8)
         self.declare_parameter('escape_dist', 1.0)
+        self.declare_parameter('pose_timeout', .5)
+        self.declare_parameter('output_topic', 'waypoint')  # legacy; strict fleet launch selects safety_waypoint
+        self.pose_timeout=float(self.get_parameter('pose_timeout').value)
+        self.pos_at={}
 
         self.n = int(self.get_parameter('num_uavs').value)
         spacing = float(self.get_parameter('spawn_spacing').value)
@@ -66,7 +70,8 @@ class CollisionMonitor(Node):
             self.create_subscription(
                 VehicleLocalPosition, f'/px4_{i}/fmu/out/vehicle_local_position',
                 self._make_cb(i), qos)
-            self.wp_pubs[i] = self.create_publisher(Point, f'/uav{i}/waypoint', 10)
+            topic=str(self.get_parameter('output_topic').value)
+            self.wp_pubs[i] = self.create_publisher(Point, f'/uav{i}/{topic}', 10)
         self.pub_warn = self.create_publisher(String, '/swarm/collision_warning', 10)
 
         self.last_escape = {}
@@ -76,8 +81,12 @@ class CollisionMonitor(Node):
 
     def _make_cb(self, i):
         def cb(msg: VehicleLocalPosition):
+            if not msg.xy_valid or not msg.z_valid or not all(math.isfinite(v) for v in (msg.x,msg.y,msg.z)):
+                self.pos.pop(i,None)
+                return
             ox, oy = self.spawn_offset[i]
             self.pos[i] = (msg.x + ox, msg.y + oy, msg.z)
+            self.pos_at[i]=msg.timestamp*1e-6
         return cb
 
     def _escape(self, i, j):
@@ -92,6 +101,7 @@ class CollisionMonitor(Node):
         dx, dy = xi - xj, yi - yj
         d = max(math.hypot(dx, dy), 1e-3)
         ux, uy = dx / d, dy / d
+        if math.hypot(dx,dy)<1e-3:ux,uy=1.,0.
         for k, sign in ((i, 1.0), (j, -1.0)):
             ox, oy = self.spawn_offset[k]
             x, y, z = self.pos[k]
@@ -103,7 +113,8 @@ class CollisionMonitor(Node):
             self.last_escape[k] = now
 
     def _tick(self):
-        ids = sorted(self.pos.keys())
+        now=self.get_clock().now().nanoseconds*1e-9
+        ids = sorted(i for i in self.pos if 0<=now-self.pos_at.get(i,-math.inf)<=self.pose_timeout)
         for a in range(len(ids)):
             for b in range(a + 1, len(ids)):
                 i, j = ids[a], ids[b]

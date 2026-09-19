@@ -1,30 +1,26 @@
-"""OpenVINS 启动（实机用）。仿真中不需要本文件。"""
-import os
-
-from ament_index_python.packages import get_package_share_directory
+"""Hardware OpenVINS: measured calibration is mandatory. Prefer algorithm.launch.py."""
+from pathlib import Path
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from uav_localization.calibration import validate_config, read_yaml, transform
+
+
+def setup(context):
+    get=lambda k:LaunchConfiguration(k).perform(context)
+    directory=Path(get('calibration_dir'))
+    cfg=directory/'estimator_config.yaml'
+    validate_config(cfg)
+    body=transform(read_yaml(directory/'body.yaml')['T_body_imu'])
+    ns=get('uav_ns')
+    return [Node(package='ov_msckf',executable='run_subscribe_msckf',namespace=ns,
+                 parameters=[{'config_path':str(cfg),'publish_global_to_imu_tf':False,'publish_calibration_tf':False}],output='screen'),
+            Node(package='uav_localization',executable='vio_to_px4.py',namespace=ns,
+                 parameters=[{'px4_ns':get('px4_ns'),'t_body_imu':body.ravel().tolist()}],output='screen')]
 
 
 def generate_launch_description():
-    uav_ns_arg = DeclareLaunchArgument('uav_ns', default_value='uav1')
-    params = os.path.join(
-        get_package_share_directory('uav_localization'),
-        'config', 'openvins_params.yaml')
-
-    return LaunchDescription([
-        uav_ns_arg,
-        Node(
-            package='ov_msckf',          # third_party/open_vins 编译后提供
-            executable='run_subscribe_msckf',
-            name='openvins',
-            namespace=LaunchConfiguration('uav_ns'),
-            parameters=[params],
-            output='screen',
-        ),
-        # 视觉里程计转飞控：/uavN/odom -> /px4_N/fmu/in/vehicle_visual_odometry
-        # 实机在此加一个转换节点（注意 ENU<->NED 与机体坐标变换），
-        # 并设置飞控参数 EKF2_EV_CTRL=15 启用视觉融合。
-    ])
+    return LaunchDescription([DeclareLaunchArgument('calibration_dir'),
+                              DeclareLaunchArgument('uav_ns',default_value='uav1'),
+                              DeclareLaunchArgument('px4_ns',default_value='px4_1'),OpaqueFunction(function=setup)])

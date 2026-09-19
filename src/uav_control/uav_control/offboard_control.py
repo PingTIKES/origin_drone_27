@@ -20,7 +20,8 @@ from rclpy.node import Node
 from rclpy.qos import (QoSProfile, QoSReliabilityPolicy,
                        QoSDurabilityPolicy, QoSHistoryPolicy)
 
-from std_msgs.msg import String
+from std_msgs.msg import String, Float32
+from std_srvs.srv import Trigger
 from geometry_msgs.msg import Point
 
 from px4_msgs.msg import (OffboardControlMode, TrajectorySetpoint,
@@ -60,12 +61,25 @@ class OffboardControl(Node):
         self.declare_parameter('takeoff_alt', 2.0)      # 起飞高度 m（正数）
         self.declare_parameter('auto_takeoff', True)    # 是否自动起飞（仿真默认开）
         self.declare_parameter('reach_tol', 0.25)       # 航点到达容差 m
+        self.declare_parameter('waypoint_timeout', 1.0)
+        self.declare_parameter('pose_timeout', .5)
+        self.declare_parameter('require_vio', False)
+        self.declare_parameter('target_system', 0)  # 0 preserves SITL instance+1
 
         self.px4_ns = self.get_parameter('px4_ns').value
         self.sysid = int(self.get_parameter('px4_instance').value) + 1
+        if int(self.get_parameter('target_system').value)>0:
+            self.sysid=int(self.get_parameter('target_system').value)
         self.takeoff_alt = float(self.get_parameter('takeoff_alt').value)
         self.auto_takeoff = bool(self.get_parameter('auto_takeoff').value)
         self.reach_tol = float(self.get_parameter('reach_tol').value)
+        self.wp_timeout = float(self.get_parameter('waypoint_timeout').value)
+        self.pose_timeout = float(self.get_parameter('pose_timeout').value)
+        self.require_vio = bool(self.get_parameter('require_vio').value)
+        self.pos_at = self.wp_at = self.vio_at = self.yaw_at = -math.inf
+        self.vio_ok = False
+        self.hold_target = self.desired_yaw = self.yaw_setpoint = self.pose_reset = None
+        self.takeoff_xy = None
 
         qos = px4_qos()
 
@@ -87,6 +101,9 @@ class OffboardControl(Node):
         # ---- 上层接口（本节点命名空间 uavN 下）----
         self.create_subscription(Point, 'waypoint', self._cb_waypoint, 10)
         self.create_subscription(String, 'command', self._cb_command, 10)
+        self.create_subscription(String, 'vio_health', self._cb_vio, 1)
+        self.create_subscription(Float32, 'desired_yaw', self._cb_yaw, 1)
+        self.create_service(Trigger, 'start_mission', self._start_mission)
         self.pub_state = self.create_publisher(String, 'state', 10)
 
         # ---- 内部状态 ----
@@ -105,15 +122,38 @@ class OffboardControl(Node):
 
     # ---------------- 回调 ----------------
     def _cb_local_pos(self, msg: VehicleLocalPosition):
+        reset=(msg.xy_reset_counter,msg.z_reset_counter,msg.heading_reset_counter)
+        if self.pose_reset is not None and reset != self.pose_reset and self.state in ('ARMING','TAKEOFF','MISSION'):
+            self.state='FAULT'
+        self.pose_reset=reset
         self.local_pos = msg
-        self.have_pos = True
+        self.have_pos = msg.xy_valid and msg.z_valid and all(math.isfinite(v) for v in (msg.x,msg.y,msg.z))
+        self.pos_at = msg.timestamp*1e-6
 
     def _cb_status(self, msg: VehicleStatus):
         self.status = msg
 
     def _cb_waypoint(self, msg: Point):
         """上层下发航点（本机本地 NED）。"""
+        if not all(math.isfinite(v) for v in (msg.x,msg.y,msg.z)):return
         self.target = (msg.x, msg.y, msg.z)
+        self.wp_at=self.get_clock().now().nanoseconds*1e-9
+        self.hold_target=None
+
+    def _cb_vio(self,msg):
+        self.vio_ok=msg.data=='VALID'
+        self.vio_at=self.get_clock().now().nanoseconds*1e-9
+
+    def _cb_yaw(self,msg):
+        if math.isfinite(msg.data):
+            self.desired_yaw=float(msg.data)
+            self.yaw_at=self.get_clock().now().nanoseconds*1e-9
+
+    def _start_mission(self,request,response):
+        response.success=self.state=='INIT'
+        if response.success:self.auto_takeoff=True
+        response.message='Start requested; waiting for valid position/VIO' if response.success else 'Restart node after resolving fault/landing'
+        return response
 
     def _cb_command(self, msg: String):
         if msg.data == 'land' and self.state in ('MISSION', 'TAKEOFF'):
@@ -159,7 +199,17 @@ class OffboardControl(Node):
         msg = TrajectorySetpoint()
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         msg.position = [float(x), float(y), float(z)]
-        msg.yaw = float('nan')   # 不控偏航，保持当前航向
+        msg.velocity = [float('nan')]*3
+        msg.acceleration = [float('nan')]*3
+        msg.yawspeed = float('nan')
+        msg.yaw = float('nan')
+        if self.yaw_setpoint is None and math.isfinite(self.local_pos.heading):
+            self.yaw_setpoint=float(self.local_pos.heading)
+        now=self.get_clock().now().nanoseconds*1e-9
+        if self.desired_yaw is not None and 0<=now-self.yaw_at<1. and self.yaw_setpoint is not None:
+            delta=(self.desired_yaw-self.yaw_setpoint+math.pi)%(2*math.pi)-math.pi
+            self.yaw_setpoint+=max(-.04,min(.04,delta))
+            msg.yaw=self.yaw_setpoint
         self.pub_setpoint.publish(msg)
 
     def _dist_to(self, x, y, z):
@@ -169,6 +219,15 @@ class OffboardControl(Node):
 
     # ---------------- 主循环 10 Hz ----------------
     def _tick(self):
+        now=self.get_clock().now().nanoseconds*1e-9
+        valid=self.have_pos and 0<=now-self.pos_at<=self.pose_timeout
+        valid=valid and (not self.require_vio or (self.vio_ok and 0<=now-self.vio_at<=.5))
+        if not valid and self.state in ('ARMING','TAKEOFF','MISSION'):
+            self.state='FAULT'
+            self.get_logger().error('Position/VIO invalid; relinquishing Offboard to configured PX4 failsafe')
+        if self.state=='FAULT' or (self.state=='INIT' and not valid):
+            self.pub_state.publish(String(data=self.state))
+            return
         # Offboard 心跳必须始终发布（否则 0.5 s 后飞控退出 Offboard）
         self._publish_offboard_mode()
 
@@ -190,6 +249,7 @@ class OffboardControl(Node):
             if (self.status.arming_state == ARMING_STATE_ARMED and
                     self.status.nav_state == NAV_STATE_OFFBOARD):
                 self.state = 'TAKEOFF'
+                self.takeoff_xy = (self.local_pos.x,self.local_pos.y)
                 self.get_logger().info('已解锁并进入 Offboard，开始起飞')
             else:
                 # 未成功则重发
@@ -197,7 +257,7 @@ class OffboardControl(Node):
                 self._arm()
 
         elif self.state == 'TAKEOFF':
-            x, y = self.local_pos.x, self.local_pos.y
+            x, y = self.takeoff_xy or (self.local_pos.x,self.local_pos.y)
             z = -self.takeoff_alt
             self._publish_setpoint(x, y, z)
             if self._dist_to(x, y, z) < self.reach_tol:
@@ -205,10 +265,12 @@ class OffboardControl(Node):
                 self.get_logger().info(f'到达起飞高度 {self.takeoff_alt} m，进入任务模式')
 
         elif self.state == 'MISSION':
-            if self.target is not None:
+            if self.target is not None and 0<=now-self.wp_at<=self.wp_timeout:
                 self._publish_setpoint(*self.target)
             else:
-                self._publish_setpoint(self.local_pos.x, self.local_pos.y, self.local_pos.z)
+                if self.hold_target is None:
+                    self.hold_target=(self.local_pos.x,self.local_pos.y,self.local_pos.z)
+                self._publish_setpoint(*self.hold_target)
 
         elif self.state == 'LAND':
             self._land()
