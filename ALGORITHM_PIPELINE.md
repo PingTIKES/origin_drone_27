@@ -1,7 +1,7 @@
 # 无雷达视觉算法闭环：仿真与真机共用
 
 硬件约束：整机 <249g，RK3576 调试 / RK3566 最终平台；用户实际相机为
-D430i + 独立 RGB，使用相机内置 IMU，PX4 1.14.2。是否有 D4 尚未确认。
+D430i + 独立 RGB，使用相机内置 IMU。仿真使用 PX4 1.14.2 SITL；真机为 MicoAir743v2-AIO-35A，已刷 PX4 1.14.3 固件（具体构建来源待核对）。是否有 D4 尚未确认。
 代码改动不增加传感器，不代表已经称重达标或证明板端实时性能。
 
 ## 已实现的数据流
@@ -47,7 +47,7 @@ D430i + 独立 RGB，使用相机内置 IMU，PX4 1.14.2。是否有 D4 尚未�
 
 ## Ubuntu：先运行真正的算法仿真
 
-依赖：Ubuntu 22.04 / ROS2 Humble、PX4 **v1.14.2**、匹配的 Gazebo/ros_gz、
+仿真依赖：Ubuntu 22.04 / ROS2 Humble、PX4 **v1.14.2 SITL**、匹配的 Gazebo/ros_gz、
 OpenVINS；px4_msgs 必须匹配 release/1.14。`setup_env.sh` 只安装历史
 PX4 1.15.4 / px4_msgs release/1.15 环境，**不能用于这条算法链**。
 需单独准备 v1.14.2 的 PX4、release/1.14 的 px4_msgs、OpenVINS 与 MicroXRCEAgent。
@@ -186,7 +186,7 @@ python3 tools/import_kalibr.py \
 
 ## 真机启动与性能验收
 
-按 [PX4 1.14.2 参数说明](deploy/px4_1_14_2_vision.md) 设置并核对视觉融合。
+真机已刷 PX4 1.14.3，不需要刷入仿真使用的 1.14.2。按 [PX4 1.14 系列真机参数说明](deploy/px4_1_14_2_vision.md) 核对固件目标、参数和视觉融合；仿真补丁仅作用于 POSIX SITL。
 飞控 Agent 和相机驱动先启动；raw/rectified 话题名称由实际驱动决定，可通过 launch 参数
 cam0_topic/cam1_topic/imu_topic 显式传入。相机 IMU 轴向必须与 Kalibr 使用的 IMU 一致。
 

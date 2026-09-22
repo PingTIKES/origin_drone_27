@@ -1,6 +1,6 @@
 # origin_drone_27
 
-RoboMaster 2027 无人机视觉定位、局部建图与规划的 ROS 2 Humble 工作空间。当前主线是 **PX4 1.14.2 + OpenVINS + 软件双目深度**：Gazebo 提供相机、IMU 和动力学，算法链不读取仿真真值定位、理想深度或预置场地栅格。单机入口为 `algorithm.launch.py`，四机入口为 `algorithm_swarm_sim.launch.py`。
+RoboMaster 2027 无人机视觉定位、局部建图与规划的 ROS 2 Humble 工作空间。当前仿真主线是 **PX4 1.14.2 SITL + OpenVINS + 软件双目深度**：Gazebo 提供相机、IMU 和动力学，算法链不读取仿真真值定位、理想深度或预置场地栅格。真机使用 **MicoAir743v2-AIO-35A、PX4 1.14.3 固件**（具体构建来源待核对）；仿真源码版本不等于已刷入的真机固件版本。单机入口为 `algorithm.launch.py`，四机入口为 `algorithm_swarm_sim.launch.py`。
 
 > 状态：Ubuntu 单机视觉定位、解锁、起飞与短时悬停已实测；目标点导航、四机协同、正常降落、RK3566 板端实时性及真机标定仍未验收。项目不能据此视为已完成实机飞行验证。
 
@@ -60,6 +60,7 @@ ros2 launch uav_bringup algorithm.launch.py sim:=true uav_id:=1 rviz:=true
 
 - 独立 RGB 目标识别仍是桩代码；四机默认只做分区搜索与返航，不会凭空产生目标检测结果。
 - 真机必须提供实际相机内外参、机体安装变换和多机坐标对齐；示例配置不能直接用于飞行。
+- 真机飞控使用 `micoair_h743-v2` 固件目标；烧录版本、DDS 消息与电机协议应按 [真机视觉配置说明](deploy/px4_1_14_2_vision.md) 核对，不要把仿真补丁用于真机。
 - 离线测试使用 ROS 消息桩，不能替代 DDS/Gazebo 集成测试或板端性能测试。
 
 本次在 Ubuntu 22.04 的纯英文临时目录中，`px4_msgs release/1.14` 与工作空间共 **10 个包完成 colcon 构建**，36 项离线测试通过，单机和四机 launch 参数可解析。独立编译的 PX4 v1.14.2 与 OpenVINS 已启动单机 SITL：Gazebo 模型位于预期出生点，`/uav1/vio_health` 达到 `VALID`，PX4 完成解锁与 Offboard 切换。修正地面保持航点覆盖起飞目标后，模型从静止时约 0.187 m 升至约 2.106 m，并短时保持在该高度；这是**单机起飞与悬停**的物理验证，不代表整条导航链通过。目标点测试中，局部规划报告 `HOLD_NO_PATH`/`HOLD_BLOCKED_START`，随后 VIO 跳变触发安全退出 Offboard，飞机降回地面；目标导航、正常降落和四机协同仍未通过。
