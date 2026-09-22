@@ -117,7 +117,7 @@ PX4_DIR=~/PX4-Autopilot-1.14.3 ./scripts/start_algorithm_sim.sh 1
 source ~/catkin_ws_ov/install/setup.bash
 source ~/origin_drone_27/install/setup.bash
 source /tmp/rm27_gz_env.sh
-ros2 launch uav_bringup algorithm.launch.py sim:=true uav_id:=1 rviz:=true
+PYTHONNOUSERSITE=1 ros2 launch uav_bringup algorithm.launch.py sim:=true uav_id:=1 rviz:=true
 ```
 
 此时不会自动解锁。先看 `/uav1/vio_health` 为 VALID、PX4 已融合视觉且位置有效，
@@ -196,7 +196,7 @@ cam0_topic/cam1_topic/imu_topic 显式传入。相机 IMU 轴向必须与 Kalibr
 
 ```bash
 # 不确定 D4 时，先用软件深度；target_system 填实际 MAV_SYS_ID
-ros2 launch uav_bringup algorithm.launch.py sim:=false uav_id:=1 \
+PYTHONNOUSERSITE=1 ros2 launch uav_bringup algorithm.launch.py sim:=false uav_id:=1 \
   target_system:=1 calibration_dir:=$PWD/calibration/uav1 depth_source:=software
 ```
 

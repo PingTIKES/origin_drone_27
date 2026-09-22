@@ -51,7 +51,7 @@ source /opt/ros/humble/setup.bash
 source ~/catkin_ws_ov/install/setup.bash
 source ~/origin_drone_27/install/setup.bash
 source /tmp/rm27_gz_env.sh
-ros2 launch uav_bringup algorithm.launch.py sim:=true uav_id:=1 rviz:=true
+PYTHONNOUSERSITE=1 ros2 launch uav_bringup algorithm.launch.py sim:=true uav_id:=1 rviz:=true
 ```
 
 确认 `/uav1/vio_health` 为 `VALID`、PX4 视觉融合和本地位置有效后，按 [单机操作与验收步骤](ALGORITHM_PIPELINE.md#ubuntu先运行真正的算法仿真)请求起飞。四机需在终端 B 改用 `algorithm_swarm_sim.launch.py`，并按 [四机启动说明](SWARM_SIMULATION.md#启动)逐机确认视觉状态。不要与 `run_swarm.sh`、`goal_nav.launch.py` 或 `WITH_RVIZ=1` 同时运行，它们使用历史控制入口。
@@ -65,7 +65,7 @@ ros2 launch uav_bringup algorithm.launch.py sim:=true uav_id:=1 rviz:=true
 
 MicoAir PX4 **1.14.3 SITL 已编译成功**，OpenVINS 4 个包与本工作空间 10 个包构建通过，36 项离线测试通过。在 Gazebo `default` 世界完成单机启动检查：模型创建成功，MicroXRCEAgent 建立连接，ROS 可见 `/px4_1/fmu/out/vehicle_status` 与 `/px4_1/fmu/out/vehicle_local_position`。这是版本与启动链路检查，尚未验证 1.14.3 的视觉融合、解锁、起飞、导航或降落。此前使用 **PX4 1.14.2** 的单机 SITL 曾从约 0.187 m 起飞至约 2.106 m 短时悬停，但目标导航报告过 `HOLD_NO_PATH`/`HOLD_BLOCKED_START`，随后 VIO 跳变触发安全退出 Offboard；该记录不能作为 **1.14.3** 的飞行验收结果。真机、四机协同和板端实时性也尚未验收。
 
-若 `import cv2` 报 NumPy 2 与 OpenCV ABI 不兼容，先检查用户级 Python 包是否覆盖了 Ubuntu 的 `python3-numpy`；本机使用 `PYTHONNOUSERSITE=1` 后恢复兼容。不要在同一 ROS 2 系统解释器中混装不兼容的 NumPy/OpenCV 版本。
+若 `ros2 launch` 或 `import cv2` 报 NumPy 2 与 OpenCV ABI 不兼容，先检查用户级 Python 包是否覆盖了 Ubuntu 的 `python3-numpy`；本机使用命令前缀 `PYTHONNOUSERSITE=1` 后恢复兼容，该设置会传给启动的 ROS 节点。不要在同一 ROS 2 系统解释器中混装不兼容的 NumPy/OpenCV 版本。
 
 若相机有图像而 VIO 始终 `INVALID`，先用 `source /tmp/rm27_gz_env.sh; gz model -m x500_stereo_uav1_1 -p` 确认模型出生在预期停机坪，再检查 `/uav1/cam0/image_raw` 与 `/uav1/odomimu`。PX4 1.14 系列只在 `PX4_GZ_MODEL` 分支应用 `PX4_GZ_MODEL_POSE`；旧脚本曾把飞机生在世界原点，画面低纹理并导致 VIO 无效。当前启动脚本已修正，但需在 1.14.3 上重验。
 

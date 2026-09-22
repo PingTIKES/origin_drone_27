@@ -376,7 +376,7 @@ else
 fi
 echo "[sim] 验证：ros2 topic list | grep px4_"
 if [ "${RM27_SIM_CLOCK:-0}" = "1" ]; then
-    echo "[sim] 算法仿真：另开终端 source OpenVINS/本工作空间，再运行 ros2 launch uav_bringup algorithm.launch.py sim:=true uav_id:=1"
+    echo "[sim] 算法仿真：另开终端 source OpenVINS/本工作空间，再运行 PYTHONNOUSERSITE=1 ros2 launch uav_bringup algorithm.launch.py sim:=true uav_id:=1"
     echo "[sim] 详情见 README.md 和 ALGORITHM_PIPELINE.md；不要启动历史 run_swarm.sh"
 else
     echo "[sim] 历史仿真：另开终端执行任务 ./scripts/run_swarm.sh"

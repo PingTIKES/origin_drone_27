@@ -55,7 +55,7 @@ source /opt/ros/humble/setup.bash
 source ~/catkin_ws_ov/install/setup.bash
 source ~/origin_drone_27/install/setup.bash
 source /tmp/rm27_gz_env.sh
-ros2 launch uav_bringup algorithm_swarm_sim.launch.py rviz:=true
+PYTHONNOUSERSITE=1 ros2 launch uav_bringup algorithm_swarm_sim.launch.py rviz:=true
 ```
 
 确认四架 VIO 都为 `VALID` 后，分别允许起飞：
