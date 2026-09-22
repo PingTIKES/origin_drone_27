@@ -2,7 +2,7 @@
 
 RoboMaster 2027 无人机视觉定位、局部建图与规划的 ROS 2 Humble 工作空间。仿真与真机统一按 **PX4 1.14.3** 配置：仿真使用 MicoAir 公开的 1.14.3 源码构建 SITL，真机使用 **MicoAir743v2-AIO-35A、PX4 1.14.3 固件**。真机所刷固件的具体构建来源仍需核对，不能仅凭版本号认定二进制或 DDS 消息完全一致。Gazebo 提供相机、IMU 和动力学，算法链不读取仿真真值定位、理想深度或预置场地栅格。单机入口为 `algorithm.launch.py`，四机入口为 `algorithm_swarm_sim.launch.py`。
 
-> 状态：Ubuntu 单机视觉定位、解锁、起飞与短时悬停已实测；目标点导航、四机协同、正常降落、RK3566 板端实时性及真机标定仍未验收。项目不能据此视为已完成实机飞行验证。
+> 状态：PX4 1.14.3 已完成 SITL 编译与单机启动检查；视觉定位、解锁、起飞与短时悬停的实测记录来自旧版 1.14.2，需在 1.14.3 上重验。目标点导航、四机协同、正常降落、RK3566 板端实时性及真机标定仍未验收。
 
 ## 文档入口
 
@@ -36,7 +36,7 @@ python3 tools/prepare_algorithm_sim.py \
 # 重新编译 PX4 SITL、OpenVINS；之后在本工作空间：
 colcon build --symlink-install
 source install/setup.bash
-python3 tools/test_algorithm_stack.py
+PYTHONNOUSERSITE=1 python3 tools/test_algorithm_stack.py
 ```
 
 `prepare_algorithm_sim.py` 只接受文档固定的 MicoAir PX4 **1.14.3 源码提交**并为修改文件保留 `.rm27-backup`；它不会下载依赖或替你编译。PX4、OpenVINS、Agent 的准备与构建顺序见 [ALGORITHM_PIPELINE.md 的 Ubuntu 步骤](ALGORITHM_PIPELINE.md#ubuntu先运行真正的算法仿真)。先确认这些依赖和仿真网格已安装，再启动：

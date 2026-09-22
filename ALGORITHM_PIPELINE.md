@@ -99,7 +99,7 @@ source install/setup.bash
 cd ~/origin_drone_27
 colcon build --symlink-install
 source install/setup.bash
-python3 tools/test_algorithm_stack.py
+PYTHONNOUSERSITE=1 python3 tools/test_algorithm_stack.py
 chmod +x scripts/start_algorithm_sim.sh
 ```
 
