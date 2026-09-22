@@ -59,6 +59,7 @@ class OffboardControl(Node):
         self.declare_parameter('px4_ns', 'px4_1')       # 飞控命名空间
         self.declare_parameter('px4_instance', 1)       # SITL 实例号（sysid = instance + 1）
         self.declare_parameter('takeoff_alt', 2.0)      # 起飞高度 m（正数）
+        self.declare_parameter('takeoff_reach_time', 1.0)  # 连续到达时间，防止估计瞬态误判
         self.declare_parameter('auto_takeoff', True)    # 是否自动起飞（仿真默认开）
         self.declare_parameter('reach_tol', 0.25)       # 航点到达容差 m
         self.declare_parameter('waypoint_timeout', 1.0)
@@ -71,6 +72,7 @@ class OffboardControl(Node):
         if int(self.get_parameter('target_system').value)>0:
             self.sysid=int(self.get_parameter('target_system').value)
         self.takeoff_alt = float(self.get_parameter('takeoff_alt').value)
+        self.takeoff_reach_time = float(self.get_parameter('takeoff_reach_time').value)
         self.auto_takeoff = bool(self.get_parameter('auto_takeoff').value)
         self.reach_tol = float(self.get_parameter('reach_tol').value)
         self.wp_timeout = float(self.get_parameter('waypoint_timeout').value)
@@ -80,6 +82,7 @@ class OffboardControl(Node):
         self.vio_ok = False
         self.hold_target = self.desired_yaw = self.yaw_setpoint = self.pose_reset = None
         self.takeoff_xy = None
+        self.takeoff_reached_since = None
 
         qos = px4_qos()
 
@@ -136,6 +139,10 @@ class OffboardControl(Node):
     def _cb_waypoint(self, msg: Point):
         """上层下发航点（本机本地 NED）。"""
         if not all(math.isfinite(v) for v in (msg.x,msg.y,msg.z)):return
+        # Navigation may publish a ground-level HOLD before takeoff. This
+        # controller only accepts cruise-altitude waypoints; landing has its
+        # own command path.
+        if abs(msg.z + self.takeoff_alt) > self.reach_tol:return
         self.target = (msg.x, msg.y, msg.z)
         self.wp_at=self.get_clock().now().nanoseconds*1e-9
         self.hold_target=None
@@ -250,6 +257,7 @@ class OffboardControl(Node):
                     self.status.nav_state == NAV_STATE_OFFBOARD):
                 self.state = 'TAKEOFF'
                 self.takeoff_xy = (self.local_pos.x,self.local_pos.y)
+                self.takeoff_reached_since = None
                 self.get_logger().info('已解锁并进入 Offboard，开始起飞')
             else:
                 # 未成功则重发
@@ -261,8 +269,14 @@ class OffboardControl(Node):
             z = -self.takeoff_alt
             self._publish_setpoint(x, y, z)
             if self._dist_to(x, y, z) < self.reach_tol:
-                self.state = 'MISSION'
-                self.get_logger().info(f'到达起飞高度 {self.takeoff_alt} m，进入任务模式')
+                if self.takeoff_reached_since is None:
+                    self.takeoff_reached_since = now
+                elif now-self.takeoff_reached_since >= self.takeoff_reach_time:
+                    self.state = 'MISSION'
+                    self.hold_target = (x, y, z)
+                    self.get_logger().info(f'稳定到达起飞高度 {self.takeoff_alt} m，进入任务模式')
+            else:
+                self.takeoff_reached_since = None
 
         elif self.state == 'MISSION':
             if self.target is not None and 0<=now-self.wp_at<=self.wp_timeout:

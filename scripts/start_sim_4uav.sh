@@ -88,18 +88,18 @@ ALL_STEREO="${ALL_STEREO:-1}"         # 1=四机全部挂 D435i（话题按机�
 # 工作空间根目录（本脚本位于 <ws>/scripts/）
 WS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# 各机出生点（Gazebo ENU "x,y"，z 留空由 PX4 默认 0.5 m）
+# 各机出生点（Gazebo ENU "x,y,z,roll,pitch,yaw"）
 # 蓝方基地启动区 NED 中心 (10.5, 0)，四机在其四周：
 #   uav1: NED ( 9.4,  1.3) -> ENU "1.3,9.4"
 #   uav2: NED ( 9.4, -1.3) -> ENU "-1.3,9.4"
 #   uav3: NED (11.6,  1.3) -> ENU "1.3,11.6"
 #   uav4: NED (11.6, -1.3) -> ENU "-1.3,11.6"
 # （修改后必须同步修改 params.yaml 的 spawn_offsets！）
-SPAWN_POSES=("1.3,9.4" "-1.3,9.4" "1.3,11.6" "-1.3,11.6")
+SPAWN_POSES=("1.3,9.4,0.5,0,0,0" "-1.3,9.4,0.5,0,0,0" "1.3,11.6,0.5,0,0,0" "-1.3,11.6,0.5,0,0,0")
 
 if [ ! -x "$PX4_BIN" ]; then
     echo "未找到 PX4 SITL 二进制：$PX4_BIN"
-    echo "请先运行 ./setup_env.sh（或 cd \$PX4_DIR && DONT_RUN=1 make px4_sitl_default）"
+    echo "请在所选 PX4 版本的源码目录运行 DONT_RUN=1 make px4_sitl_default"
     exit 1
 fi
 
@@ -139,8 +139,8 @@ if [ "$WORLD" != "default" ]; then
         if [ -f "$STL_SRC" ]; then
             echo "[sim] 场地模型直接加载：$STL_SRC"
             echo "[sim] 场地网格 md5: $(md5sum "$STL_SRC" | cut -d' ' -f1)"
-            echo "[sim]   参考值：fa41fd76e66492d8c87762355f461977（削墙+清理退化三角形版，推荐）"
-            echo "[sim]           bf4ab3fc2320af8cff00e6c52be3409d（旧削墙版，含 402 个退化三角形）"
+            echo "[sim]   固定上游原始网格参考值：440a0d88aadfbc3dafa5604cf50a5071"
+            echo "[sim]   历史加工网格的校验值不同；请以实际文件与碰撞表现为准"
         fi
         # 离线占据栅格缺失时一并重建（供 goal_planner 的 A* 使用）
         if [ ! -s "$WS_DIR/src/uav_planning/maps/rmuc_2025_occ.npz" ]; then
@@ -243,7 +243,10 @@ start_uav() {
     fi
     UAV_MODEL_BASE[$i]="${M#gz_}"
     echo "[sim] 启动实例 $i（standalone），出生点 ENU($POSE)"
-    PX4_GZ_STANDALONE=1 PX4_SYS_AUTOSTART=$AUTOSTART PX4_SIM_MODEL=$M PX4_GZ_MODEL_POSE="$POSE" \
+    # PX4 1.14.2 only honors PX4_GZ_MODEL_POSE in its PX4_GZ_MODEL branch.
+    # PX4 1.15.x also accepts PX4_SIM_MODEL; set both for the two documented flows.
+    PX4_GZ_STANDALONE=1 PX4_SYS_AUTOSTART=$AUTOSTART PX4_SIM_MODEL=$M \
+        PX4_GZ_MODEL="${M#gz_}" PX4_GZ_MODEL_POSE="$POSE" \
         "$PX4_BIN" -i "$i" > "/tmp/px4_instance_$i.log" 2>&1 &
     UAV_PID[$i]=$!
     PIDS+=($!)
@@ -372,12 +375,17 @@ else
     echo "[sim] 仿真启动结束，但有 $missing 台未加载（见上方汇总与各机日志 /tmp/px4_instance_*.log）。"
 fi
 echo "[sim] 验证：ros2 topic list | grep px4_"
-echo "[sim] 另开终端执行任务：./scripts/run_swarm.sh"
-echo "[sim] 想仿真+RViz 打点一把起：WITH_RVIZ=1 ./scripts/start_sim_4uav.sh"
+if [ "${RM27_SIM_CLOCK:-0}" = "1" ]; then
+    echo "[sim] 算法仿真：另开终端 source OpenVINS/本工作空间，再运行 ros2 launch uav_bringup algorithm.launch.py sim:=true uav_id:=1"
+    echo "[sim] 详情见 README.md 和 ALGORITHM_PIPELINE.md；不要启动历史 run_swarm.sh"
+else
+    echo "[sim] 历史仿真：另开终端执行任务 ./scripts/run_swarm.sh"
+    echo "[sim] 历史打点入口：WITH_RVIZ=1 ./scripts/start_sim_4uav.sh"
+fi
 echo "[sim] Ctrl+C 或 ./scripts/stop_sim.sh 结束仿真"
 echo "[sim] 别的终端手动用 gz topic/gz service 调试前，先执行：source /tmp/rm27_gz_env.sh"
 echo "[sim] 如遇界面空白/缺机等异常，请把 /tmp/gz_server.log /tmp/gz_gui.log /tmp/px4_instance_*.log 发出来"
-if [ "$ALL_STEREO" = "1" ]; then
+if [ "$ALL_STEREO" = "1" ] && [ "${RM27_SIM_CLOCK:-0}" != "1" ]; then
     echo "[sim] 全机 D435i 模式：桥接+VIO 另开终端 ./scripts/run_openvins_sim.sh"
     echo "[sim]   （默认 OpenVINS 只跑 uav1；多机同跑 VIO_UAVS=\"1 3\" ./scripts/run_openvins_sim.sh）"
 elif [ "$VIO_UAV" -gt 0 ] 2>/dev/null; then

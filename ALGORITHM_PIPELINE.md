@@ -48,25 +48,52 @@ D430i + 独立 RGB，使用相机内置 IMU，PX4 1.14.2。是否有 D4 尚未�
 ## Ubuntu：先运行真正的算法仿真
 
 依赖：Ubuntu 22.04 / ROS2 Humble、PX4 **v1.14.2**、匹配的 Gazebo/ros_gz、
-OpenVINS；px4_msgs 必须匹配 release/1.14。工作空间已有 setup_env.sh 可作安装参考，
-但不要让它把已匹配的依赖升级为 main。
+OpenVINS；px4_msgs 必须匹配 release/1.14。`setup_env.sh` 只安装历史
+PX4 1.15.4 / px4_msgs release/1.15 环境，**不能用于这条算法链**。
+需单独准备 v1.14.2 的 PX4、release/1.14 的 px4_msgs、OpenVINS 与 MicroXRCEAgent。
+工作空间路径应只含英文字符：本机 ROS 2 接口生成器在中文目录下构建失败。
+PX4 建议完整克隆并保留子模块标签；浅克隆的 NuttX 子模块缺少版本标签时，
+`px_update_git_header.py` 会报 `IndexError`。若使用浅克隆，需要补齐对应
+子模块提交与 NuttX 标签后再编译。
+
+首次准备源码时，可使用下面的版本和目录。已安装 PX4 1.15.x 的机器，
+请为 1.14.2 选独立目录，并在补丁命令及启动命令中使用同一目录。
 
 ```bash
-cd ~/rm27-uav-swarm
+git clone --recursive --branch v1.14.2 \
+  https://github.com/PX4/PX4-Autopilot.git ~/PX4-Autopilot-1.14.2
+cd ~/PX4-Autopilot-1.14.2
+bash Tools/setup/ubuntu.sh --no-nuttx
+
+mkdir -p ~/catkin_ws_ov/src
+git clone https://github.com/rpng/open_vins.git ~/catkin_ws_ov/src/open_vins
+
+cd ~/origin_drone_27
+mkdir -p third_party
+git clone --branch release/1.14 https://github.com/PX4/px4_msgs.git third_party/px4_msgs
+ln -s ../third_party/px4_msgs src/px4_msgs
+```
+
+另需安装与 PX4 1.14.2 兼容的 `MicroXRCEAgent` 和 Gazebo Garden 对应的
+`ros_gz_bridge`；启动前用 `command -v MicroXRCEAgent` 与
+`ros2 pkg prefix ros_gz_bridge` 检查。不要让 `setup_env.sh` 安装另一套 PX4。
+
+```bash
+cd ~/origin_drone_27
 source /opt/ros/humble/setup.bash
 rosdep install --from-paths src --ignore-src -r -y
 
 # 对 Ubuntu 上已有源码做有锚点检查、可备份回退的小补丁
 python3 tools/prepare_algorithm_sim.py \
-  --px4 ~/PX4-Autopilot --openvins ~/catkin_ws_ov/src/open_vins
+  --px4 ~/PX4-Autopilot-1.14.2 --openvins ~/catkin_ws_ov/src/open_vins
 
-cd ~/PX4-Autopilot
+cd ~/PX4-Autopilot-1.14.2
 DONT_RUN=1 make px4_sitl_default
 cd ~/catkin_ws_ov
 colcon build --packages-select ov_core ov_init ov_msckf ov_eval
 source install/setup.bash
-cd ~/rm27-uav-swarm
-colcon build
+cd ~/origin_drone_27
+colcon build --symlink-install
 source install/setup.bash
 python3 tools/test_algorithm_stack.py
 chmod +x scripts/start_algorithm_sim.sh
@@ -76,15 +103,15 @@ chmod +x scripts/start_algorithm_sim.sh
 RM27_SIM_CLOCK 环境开关使 DDS 保持模拟时基；真实飞控不使用该开关。
 OpenVINS 补丁让成功静止初始化后可发布状态，避免“等 VIO 才起飞、等起飞才输出 VIO”
 死锁。原文件旁保留 .rm27-backup；不匹配的上游源码会拒绝修改。补丁后需要重新编译，
-其 Ubuntu 编译和闭环效果尚未在本 Windows 工作环境验证。
+本次 Ubuntu 单机起飞与短时悬停的验证结果见文末；目标导航等项目仍需逐项验收。
 
 ```bash
-# 终端 A：只起环境（四个模型），关闭旧的 WITH_RVIZ 导航入口
-./scripts/start_algorithm_sim.sh
+# 终端 A：先起单机环境；不传 1 则默认四机。关闭旧的 WITH_RVIZ 导航入口
+PX4_DIR=~/PX4-Autopilot-1.14.2 ./scripts/start_algorithm_sim.sh 1
 
 # 终端 B：先从一架的完整算法开始
 source ~/catkin_ws_ov/install/setup.bash
-source ~/rm27-uav-swarm/install/setup.bash
+source ~/origin_drone_27/install/setup.bash
 source /tmp/rm27_gz_env.sh
 ros2 launch uav_bringup algorithm.launch.py sim:=true uav_id:=1 rviz:=true
 ```
@@ -96,7 +123,8 @@ ros2 launch uav_bringup algorithm.launch.py sim:=true uav_id:=1 rviz:=true
 ros2 service call /uav1/start_mission std_srvs/srv/Trigger '{}'
 ```
 
-悬停到 2m 后，在 RViz 用 2D Goal 选择局部目标（目标高度固定为 altitude 参数）。
+Gazebo 世界位姿确认悬停到约 2m，且 `/uav1/obstacles`、`/uav1/local_map`
+持续发布后，在 RViz 用 2D Goal 选择局部目标（目标高度固定为 altitude 参数）。
 Fixed Frame 是 `uav1_local_nwu`，与旧 map 的混合坐标约定隔离。
 也可以直接发目标：
 
@@ -107,7 +135,9 @@ ros2 topic echo /uav1/navigation_state
 ros2 topic pub --once /uav1/command std_msgs/msg/String "{data: land}"
 ```
 
-起飞/降落由 PX4 控制，不由二维地图证明其竖直通道安全。
+服务返回 `Start requested` 只表示接受请求；VIO 无效时节点仍保持 `INIT`，
+不能把服务返回 `success=True` 当作已解锁。起飞/降落由 PX4 控制，
+不由二维地图证明其竖直通道安全。
 新仿真每轮重启时，应重启算法节点及桥，重新 source 分区文件。不要同时运行旧 launch。
 第二架可起相同 launch，`uav_id:=2 bridge_clock:=false`；只保留一个 /clock 发布桥。
 
@@ -193,9 +223,15 @@ alignment_file（shared_heading_aligned: true；spawn_offsets: [x1,y1,x2,y2,...]
 
 ## 验证范围与参考
 
-本次 Windows 上运行离线几何、实际节点回调的消息桩测试、OpenCV 配置读取和人工纹理
-双目深度测试。没有运行 ROS2 DDS/Gazebo 闭环、没有真实相机标定数据、没有 RK3566 板端数据，
-因此这三项仍待执行；不能把此变更直接称作飞行验收完成。
+已实现离线几何、节点回调的消息桩测试、OpenCV 配置读取和人工纹理双目深度测试。
+在 Ubuntu 22.04 上，PX4 v1.14.2 和 OpenVINS 已编译，单机 Gazebo 模型、Agent、
+相机与 IMU 话题已验证。修正 PX4 1.14.2 忽略出生点的启动参数后，模型处于预期
+停机坪，VIO 达到 `VALID`，PX4 可解锁并进入 Offboard。修复局部导航器的地面保持
+航点覆盖起飞目标后，Gazebo 模型从静止时约 0.187 m 升至约 2.106 m 并短时悬停，
+单机物理起飞已复测。状态机要求估计高度连续稳定到达才进入任务阶段，且忽略
+偏离巡航高度的航点。目标点测试报告 `HOLD_NO_PATH`/`HOLD_BLOCKED_START`，
+后来 VIO 跳变触发 Offboard 安全退出；目标导航和正常降落未通过。
+没有真实相机标定数据或 RK3566 板端数据，四机协同和实机飞行仍须单独验收。
 
 - [Kalibr 双目标定](https://github.com/ethz-asl/kalibr/wiki/multiple-camera-calibration)
 - [Kalibr 相机—IMU 标定](https://github.com/ethz-asl/kalibr/wiki/camera-imu-calibration)

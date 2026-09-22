@@ -4,6 +4,13 @@
 Offboard 控制。Gazebo 只提供环境、相机、IMU 和动力学，不向集群算法提供
 真值位置、理想深度或真值目标。
 
+Ubuntu 单机实测中，VIO 已达到 `VALID`，PX4 已解锁并进入 Offboard，Gazebo
+模型完成约 2 m 起飞和短时悬停。目标导航遇到局部地图无路径和 VIO 跳变，
+四机流程尚未验证。先按
+[单机验收步骤](ALGORITHM_PIPELINE.md#ubuntu先运行真正的算法仿真)
+核对物理高度和估计高度，再尝试本页四机流程；当前不能把下文频率与状态描述
+当作已验证结果。
+
 ## 数据流
 
 ```text
@@ -38,7 +45,7 @@ python3 tools/test_algorithm_stack.py
 
 ```bash
 cd ~/origin_drone_27
-PX4_DIR=~/PX4-Autopilot ./scripts/start_algorithm_sim.sh
+PX4_DIR=~/PX4-Autopilot-1.14.2 ./scripts/start_algorithm_sim.sh
 ```
 
 终端 B 启动四套算法和一个任务协调器：

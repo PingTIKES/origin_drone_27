@@ -179,6 +179,13 @@ class GeometryTests(unittest.TestCase):
             self.assertEqual(first,(cpp.read_bytes(),rc.read_bytes(),header.read_bytes()))
             self.assertIn('#if defined(__PX4_POSIX)',cpp.read_text())
             self.assertIn('param set EKF2_GPS_CTRL 0',rc.read_text())
+            header.write_text('bool initialized() { return is_initialized_vio; }')
+            module.write_checked(
+                header, 'bool initialized() { return is_initialized_vio && timelastupdate != -1; }',
+                'bool initialized() { return is_initialized_vio; } // RM27_STATIC_VIO',
+                'RM27_STATIC_VIO',
+                equivalent='bool initialized() { return is_initialized_vio; }')
+            self.assertIn('RM27_STATIC_VIO',header.read_text())
 
     def test_kalibr_import_inverse(self):
         import yaml
@@ -300,6 +307,24 @@ class AdapterTests(unittest.TestCase):
         o._cb_waypoint(Point(3.,2.,-2.));o.clock=12;o._cb_local_pos(position(12));o._tick()
         self.assertEqual(o.pub_setpoint.messages[-1].position,[1.,-1.,-2.])
         p=position(12);p.x=1.1;o._cb_local_pos(p);o._tick()
+        self.assertEqual(o.pub_setpoint.messages[-1].position,[1.,-1.,-2.])
+
+    def test_takeoff_requires_stable_altitude(self):
+        o=Offboard();o.state='TAKEOFF';o.takeoff_xy=(1.,-1.)
+        o._cb_waypoint(Point(1.,-1.,0.))
+        self.assertIsNone(o.target)
+        o._cb_local_pos(position());o._tick()
+        self.assertEqual(o.state,'TAKEOFF')
+        o.clock=10.1;p=position(10.1);p.z=0.;o._cb_local_pos(p);o._tick()
+        self.assertIsNone(o.takeoff_reached_since)
+        o.clock=10.2;o._cb_local_pos(position(10.2));o._tick()
+        o.clock=11.1;o._cb_local_pos(position(11.1));o._tick()
+        self.assertEqual(o.state,'TAKEOFF')
+        o.clock=11.3;o._cb_local_pos(position(11.3));o._tick()
+        self.assertEqual(o.state,'MISSION')
+        self.assertEqual(o.hold_target,(1.,-1.,-2.))
+        o._cb_waypoint(Point(1.,-1.,0.))
+        o._tick()
         self.assertEqual(o.pub_setpoint.messages[-1].position,[1.,-1.,-2.])
 
     def test_offboard_vio_fault_latches(self):

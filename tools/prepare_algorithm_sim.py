@@ -8,9 +8,11 @@ from pathlib import Path
 import subprocess
 
 
-def write_checked(path,old,new,marker):
+def write_checked(path,old,new,marker,equivalent=None):
     text=path.read_text(encoding='utf-8')
     if marker in text:return
+    if equivalent is not None and text.count(equivalent)==1:
+        old=equivalent
     if text.count(old)!=1:raise RuntimeError(f'unsupported source version/anchor: {path}')
     backup=path.with_name(path.name+'.rm27-backup')
     if not backup.exists():backup.write_text(text,encoding='utf-8')
@@ -63,7 +65,8 @@ fi
     header=Path(a.openvins)/'ov_msckf/src/core/VioManager.h'
     old='bool initialized() { return is_initialized_vio && timelastupdate != -1; }'
     new='bool initialized() { return is_initialized_vio; } // RM27_STATIC_VIO: publish after successful static initialization'
-    write_checked(header,old,new,'RM27_STATIC_VIO')
+    write_checked(header,old,new,'RM27_STATIC_VIO',
+                  equivalent='bool initialized() { return is_initialized_vio; }')
     print('Patched source with .rm27-backup copies. Rebuild PX4 SITL and OpenVINS before running.')
 
 

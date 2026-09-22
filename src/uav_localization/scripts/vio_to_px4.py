@@ -77,8 +77,8 @@ class VioBridge(Node):
                 self.get_logger().error('VIO discontinuity; bridge latched until reset_vio_bridge')
                 return
         out = VehicleOdometry()
-        # Real hardware: XRCE performs clock conversion. Simulation: use /clock
-        # everywhere and set UXRCE_DDS_SYNCT=0; never apply an offset twice.
+        # Hardware uses XRCE clock conversion. Algorithm SITL uses /clock on
+        # both sides via the PX4-side RM27_SIM_CLOCK patch; do not offset twice.
         out.timestamp, out.timestamp_sample = int(now*1e6),int(stamp*1e6)
         out.pose_frame = VehicleOdometry.POSE_FRAME_FRD
         out.velocity_frame = VehicleOdometry.VELOCITY_FRAME_BODY_FRD

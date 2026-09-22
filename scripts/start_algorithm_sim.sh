@@ -10,4 +10,4 @@ if ! grep -q RM27_SIM_CLOCK "$SOURCE" || [[ ! -f "$PX4_EXEC" || "$SOURCE" -nt "$
     exit 1
 fi
 export RM27_SIM_CLOCK=1 ALL_STEREO=1 WITH_RVIZ=0
-exec "$ROOT_DIR/scripts/start_sim_4uav.sh"
+exec "$ROOT_DIR/scripts/start_sim_4uav.sh" "$@"
