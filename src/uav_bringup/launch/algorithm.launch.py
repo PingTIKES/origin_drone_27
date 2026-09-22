@@ -87,7 +87,11 @@ def setup(context):
                       ('d435i/depth/camera_info',arg('depth_info_topic'))]
     nodes.append(node('uav_perception','stereo_depth_node','stereo_depth_node',
                  {'uav_id':uid,'cam_xyz':t_bc[:3,3].tolist(),'cam_rotation':t_bc[:3,:3].ravel().tolist(),
-                  'require_camera_info':True,'preserve_stamp':True,'depth_scale':float(arg('depth_scale')),
+                  'fx':float(matcher.p[0,0]) if mode=='software' else 337.2,
+                  'fy':float(matcher.p[1,1]) if mode=='software' else 337.2,
+                  'cx':float(matcher.p[0,2]) if mode=='software' else 319.5,
+                  'cy':float(matcher.p[1,2]) if mode=='software' else 239.5,
+                  'require_camera_info':mode=='hardware','preserve_stamp':True,'depth_scale':float(arg('depth_scale')),
                   'frame_decimation':1 if mode=='software' else 3},depth_remaps))
     nodes.append(node('uav_mapping','rolling_mapper','rolling_mapper',
                       {'uav_id':uid,'px4_ns':f'px4_{uid}','cam_xyz':t_bc[:3,3].tolist()}))

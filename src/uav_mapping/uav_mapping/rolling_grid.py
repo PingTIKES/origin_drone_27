@@ -44,6 +44,16 @@ def body_to_nwu(q):
     return flip @ r @ flip
 
 
+def body_quaternion_to_nwu(q):
+    """PX4 FRD-to-NED wxyz quaternion as FLU-to-NWU wxyz quaternion."""
+    q = np.asarray(q, dtype=float)
+    norm = np.linalg.norm(q)
+    if not np.all(np.isfinite(q)) or not .9 < norm < 1.1:
+        raise ValueError('invalid attitude quaternion')
+    w, x, y, z = q / norm
+    return np.array([w, x, -y, -z])
+
+
 def slab_endpoint(sensor, point, altitude, half_height):
     """Clip a valid ray to the flight slab; no-return pixels never reach here.
     Returns (endpoint, hit). Rays starting outside the slab do not clear cells.

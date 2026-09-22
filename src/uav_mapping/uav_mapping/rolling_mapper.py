@@ -9,7 +9,10 @@ from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
 from px4_msgs.msg import VehicleLocalPosition, VehicleAttitude
-from uav_mapping.rolling_grid import RollingGrid, body_to_nwu, ray_cells, slab_endpoint
+from geometry_msgs.msg import TransformStamped
+from tf2_ros import TransformBroadcaster
+from uav_mapping.rolling_grid import (RollingGrid, body_to_nwu,
+                                      body_quaternion_to_nwu, ray_cells, slab_endpoint)
 
 
 class RollingMapper(Node):
@@ -36,6 +39,7 @@ class RollingMapper(Node):
                                  f'/{p("px4_ns")}/fmu/out/vehicle_attitude', self.attitude, qos_profile_sensor_data)
         self.create_subscription(PointCloud2, 'obstacles', self.cloud, qos_profile_sensor_data)
         self.pub = self.create_publisher(OccupancyGrid, 'local_map', 1)
+        self.tf_pub = TransformBroadcaster(self)
 
     def now(self): return self.get_clock().now().nanoseconds * 1e-9
 
@@ -48,9 +52,26 @@ class RollingMapper(Node):
             self.reset_id = reset
         if valid:
             self.positions.append((msg.timestamp*1e-6, np.array([msg.x, -msg.y, -msg.z])))
+            if self.attitudes:
+                at, _, quat = min(self.attitudes, key=lambda a: abs(a[0] - msg.timestamp*1e-6))
+                if abs(at - msg.timestamp*1e-6) <= self.slop:
+                    tf = TransformStamped()
+                    tf.header.stamp = self.get_clock().now().to_msg()
+                    tf.header.frame_id = self.frame
+                    tf.child_frame_id = self.body_frame
+                    tf.transform.translation.x = float(msg.x)
+                    tf.transform.translation.y = float(-msg.y)
+                    tf.transform.translation.z = float(-msg.z)
+                    tf.transform.rotation.w = float(quat[0])
+                    tf.transform.rotation.x = float(quat[1])
+                    tf.transform.rotation.y = float(quat[2])
+                    tf.transform.rotation.z = float(quat[3])
+                    self.tf_pub.sendTransform(tf)
 
     def attitude(self, msg):
-        try: rotation = body_to_nwu(msg.q)
+        try:
+            rotation = body_to_nwu(msg.q)
+            quat = body_quaternion_to_nwu(msg.q)
         except ValueError:
             self.attitudes.clear()
             self.grid.clear()
@@ -59,7 +80,7 @@ class RollingMapper(Node):
             self.grid.clear()
             self.attitudes.clear()
             self.att_reset = msg.quat_reset_counter
-        self.attitudes.append((msg.timestamp*1e-6, rotation))
+        self.attitudes.append((msg.timestamp*1e-6, rotation, quat))
 
     def cloud(self, msg):
         now = self.now()
@@ -68,7 +89,7 @@ class RollingMapper(Node):
             return
         if not self.positions or not self.attitudes: return
         pt, pos = min(self.positions, key=lambda p: abs(p[0] - stamp))
-        at, rotation = min(self.attitudes, key=lambda p: abs(p[0] - stamp))
+        at, rotation, _ = min(self.attitudes, key=lambda p: abs(p[0] - stamp))
         if max(abs(pt - stamp), abs(at - stamp)) > self.slop: return
         if stamp <= self.last_cloud: return
         self.last_cloud = stamp

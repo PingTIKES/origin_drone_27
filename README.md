@@ -69,6 +69,6 @@ MicoAir PX4 **1.14.3 SITL 已编译成功**，OpenVINS 4 个包与本工作空�
 
 若相机有图像而 VIO 始终 `INVALID`，先用 `source /tmp/rm27_gz_env.sh; gz model -m x500_stereo_uav1_1 -p` 确认模型出生在预期停机坪，再检查 `/uav1/cam0/image_raw` 与 `/uav1/odomimu`。PX4 1.14 系列只在 `PX4_GZ_MODEL` 分支应用 `PX4_GZ_MODEL_POSE`；旧脚本曾把飞机生在世界原点，画面低纹理并导致 VIO 无效。当前启动脚本已修正，但需在 1.14.3 上重验。
 
-若深度图存在而导航一直显示 `HOLD_MAP_STALE`，依次检查 `/uav1/d435i/depth/camera_info`、`/uav1/obstacles`、`/uav1/local_map` 是否持续发布；仿真重启后须重启算法 launch。出现 `HOLD_NO_PATH` 或 `HOLD_BLOCKED_START` 时不要把服务响应或目标消息当作移动成功，需先检查局部地图与 Gazebo 实际位姿。
+若深度图存在而导航一直显示 `HOLD_MAP_STALE`，依次用 `ros2 topic hz` 检查 `/uav1/d435i/depth/image_raw`、`/uav1/obstacles`、`/uav1/local_map`，再用 `ros2 topic echo --once /tf` 检查 `uav1_local_nwu → uav1`。仿真重启后须重启算法 launch；源码更新后须重新构建并重新启动算法 launch。仿真软件立体匹配的相机内参由匹配器配置直接传入，真机仍要求匹配的 `camera_info`。出现 `HOLD_NO_PATH` 或 `HOLD_BLOCKED_START` 时不要把服务响应或目标消息当作移动成功，需先检查局部地图与 Gazebo 实际位姿。
 
 详细的数据流、故障处理和实机限制分别见上表文档。

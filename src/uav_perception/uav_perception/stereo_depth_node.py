@@ -5,13 +5,12 @@ D435i 深度图 → 机体坐标系障碍点云（即框架文档里的 stereo_d
       sensor_msgs/Image，32FC1 浮点深度，单位米
 发布  obstacles（→/uavN/obstacles）sensor_msgs/PointCloud2
       坐标系 = 机体 FLU（x 前、y 左、z 上），frame_id = uavN，
-      与 pose_tf_publisher 的 map->uavN TF 配合可直接在 RViz 显示
+      与 rolling_mapper 的 uavN_local_nwu->uavN TF 配合可在 RViz 显示
 
 仿真/实机同一份代码：
   仿真：start_sim_4uav.sh 的 D435i 模型深度相机（640x480@15，hfov 1.5184 rad）
   实机：realsense2_camera 的 /camera/camera/depth/image_rect_raw，
-        launch 里 remap 进来即可；内参变了就改 fx/fy/cx/cy 参数
-        （或后续升级为订阅 camera_info 自动读取）
+        launch 里 remap 进来；必须收到匹配的 camera_info。
 
 处理链：跳帧（frame_decimation）→ 像素抽稀（step）→ 反投影 →
         光学系转机体 FLU（含安装外参平移）→ 量程过滤 → 发布。
@@ -69,6 +68,7 @@ class StereoDepthNode(Node):
         self.require_info = bool(self.get_parameter('require_camera_info').value)
         self.preserve_stamp = bool(self.get_parameter('preserve_stamp').value)
         self.info_shape = None
+        self.last_info_warning = -float('inf')
         self.step = int(self.get_parameter('step').value)
         self.decim = int(self.get_parameter('frame_decimation').value)
         self.min_r = float(self.get_parameter('min_range').value)
@@ -97,7 +97,12 @@ class StereoDepthNode(Node):
         if self._count % self.decim != 0:
             return
         h, w, s = msg.height, msg.width, self.step
-        if self.require_info and self.info_shape != (h,w): return
+        if self.require_info and self.info_shape != (h,w):
+            now = self.get_clock().now().nanoseconds * 1e-9
+            if now - self.last_info_warning >= 5:
+                self.get_logger().warn(f'等待匹配深度图 {w}x{h} 的 CameraInfo；当前 {self.info_shape}')
+                self.last_info_warning = now
+            return
         try:
             depth = decode_depth(msg.data,h,w,msg.step,msg.encoding,msg.is_bigendian,self.depth_scale)
         except ValueError as exc:
@@ -122,10 +127,8 @@ class StereoDepthNode(Node):
         y_o = (v - self.cy) * z / self.fy
         # 光学系 → 机体 FLU（x 前、y 左、z 上）+ 安装平移
         cloud = np.stack([x_o, y_o, z], axis=1) @ self.rotation.T + self.cam_xyz
-        # 时间戳必须重打成本机时钟：深度图头里是 Gazebo 仿真时间，
-        # 而 pose_tf_publisher 的 map->uavN TF 用系统时间，两个时钟
-        # 不一致会让 RViz 的 TF 缓存永远查不到对应时刻（报
-        # "earlier than all the data in the transform cache" 丢帧）
+        # 新算法 launch 中深度图、地图与 TF 使用同一 ROS 时钟。
+        # 旧入口保留重打时间戳的选项。
         hdr = Header()
         hdr.stamp = msg.header.stamp if self.preserve_stamp else self.get_clock().now().to_msg()
         hdr.frame_id = self.frame_id

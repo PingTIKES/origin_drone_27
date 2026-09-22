@@ -17,7 +17,7 @@ import numpy as np
 ROOT=Path(__file__).resolve().parents[1]
 for pkg in ('uav_mapping','uav_planning','uav_localization','uav_perception','uav_control','uav_swarm'):
     sys.path.insert(0,str(ROOT/'src'/pkg))
-from uav_mapping.rolling_grid import RollingGrid,body_to_nwu
+from uav_mapping.rolling_grid import RollingGrid,body_to_nwu,body_quaternion_to_nwu
 from uav_planning.local_grid_planner import LocalGridPlanner,bounded_step
 from uav_perception.depth_geometry import decode_depth
 from uav_localization.vio_geometry import rotation,quaternion,convert
@@ -118,6 +118,13 @@ class GeometryTests(unittest.TestCase):
         np.testing.assert_allclose(r@[1,0,0],[0,-1,0],atol=1e-6)
         r=body_to_nwu([math.sqrt(.5),math.sqrt(.5),0,0])
         np.testing.assert_allclose(r@[0,1,0],[0,0,1],atol=1e-6)
+
+    def test_body_tf_quaternion_matches_mapping_rotation(self):
+        rng=np.random.default_rng(27)
+        for _ in range(20):
+            q=rng.normal(size=4);q/=np.linalg.norm(q)
+            converted=body_quaternion_to_nwu(q)
+            np.testing.assert_allclose(rotation(converted),body_to_nwu(q),atol=1e-7)
 
     def test_depth_padding_endian_scale(self):
         raw=np.array([[1000,2000,999],[0,3000,999]],dtype='>u2').tobytes()
@@ -369,6 +376,9 @@ class AdapterTests(unittest.TestCase):
             names=[n.executable for n in nodes]
             self.assertIn('software_stereo',names);self.assertIn('vio_to_px4.py',names)
             self.assertNotIn('sim_target_detector',names);self.assertNotIn('vfh_planner',names)
+            depth_node=next(n for n in nodes if n.executable=='stereo_depth_node')
+            self.assertFalse(depth_node.parameters[1]['require_camera_info'])
+            self.assertGreater(depth_node.parameters[1]['fx'],0)
             _,cams,imu=validate_config(Path(directory)/'estimator_config.yaml')
             np.testing.assert_allclose(np.array(cams['cam0']['T_imu_cam'])[:3,3],[0,-.025,0])
             self.assertEqual(imu['update_rate'],200.)
