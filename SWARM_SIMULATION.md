@@ -45,7 +45,7 @@ python3 tools/test_algorithm_stack.py
 
 ```bash
 cd ~/origin_drone_27
-PX4_DIR=~/PX4-Autopilot-1.14.2 ./scripts/start_algorithm_sim.sh
+PX4_DIR=~/PX4-Autopilot-1.14.3 ./scripts/start_algorithm_sim.sh
 ```
 
 终端 B 启动四套算法和一个任务协调器：

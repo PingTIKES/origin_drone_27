@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Apply narrowly checked PX4 v1.14.2 SITL clock/EV and OpenVINS startup patches.
+"""Apply narrowly checked MicoAir PX4 v1.14.3 SITL and OpenVINS patches.
 Run on the Ubuntu source workspaces, then rebuild both dependencies.
 Hardware PX4 sources are NOT a target of this tool.
 """
 import argparse
 from pathlib import Path
 import subprocess
+
+PX4_SOURCE_COMMIT = '08310a5e8ac64d02edb41523460e7dc267298deb'
 
 
 def write_checked(path,old,new,marker,equivalent=None):
@@ -25,8 +27,11 @@ def main():
     p.add_argument('--openvins',required=True)
     a=p.parse_args()
     px4=Path(a.px4).resolve()
-    tag=subprocess.check_output(['git','describe','--tags','--exact-match','HEAD'],cwd=px4,text=True).strip()
-    if tag!='v1.14.2':raise RuntimeError('requires PX4 v1.14.2 source, found '+tag)
+    if not px4.is_dir():
+        raise RuntimeError(f'PX4 source directory not found: {px4}; clone the MicoAir 1.14.3 source first')
+    commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=px4,text=True).strip()
+    if commit!=PX4_SOURCE_COMMIT:
+        raise RuntimeError(f'requires MicoAir PX4 1.14.3 source at {PX4_SOURCE_COMMIT}, found {commit}')
     source=px4/'src/modules/uxrce_dds_client/uxrce_dds_client.cpp'
     old='\t// latest round trip time (RTT)'
     new='''#if defined(__PX4_POSIX)

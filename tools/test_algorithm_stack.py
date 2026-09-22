@@ -174,8 +174,11 @@ class GeometryTests(unittest.TestCase):
             spec=importlib.util.spec_from_file_location('prepare',ROOT/'tools/prepare_algorithm_sim.py')
             module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
             argv=['prepare','--px4',str(px4),'--openvins',str(ov)]
-            with patch.object(sys,'argv',argv),patch.object(module.subprocess,'check_output',return_value='v1.14.2'):
+            with patch.object(sys,'argv',argv),patch.object(module.subprocess,'check_output',return_value=module.PX4_SOURCE_COMMIT):
                 module.main();first=(cpp.read_bytes(),rc.read_bytes(),header.read_bytes());module.main()
+            with patch.object(sys,'argv',argv),patch.object(module.subprocess,'check_output',return_value='v1.14.2'):
+                with self.assertRaisesRegex(RuntimeError,'requires MicoAir PX4 1.14.3'):
+                    module.main()
             self.assertEqual(first,(cpp.read_bytes(),rc.read_bytes(),header.read_bytes()))
             self.assertIn('#if defined(__PX4_POSIX)',cpp.read_text())
             self.assertIn('param set EKF2_GPS_CTRL 0',rc.read_text())

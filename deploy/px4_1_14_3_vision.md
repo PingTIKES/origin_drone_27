@@ -1,6 +1,6 @@
-# PX4 1.14 系列真机视觉定位配置
+# PX4 1.14.3 真机视觉定位配置
 
-真机为 **MicoAir743v2-AIO-35A**，用户确认已刷 **PX4 1.14.3**，具体构建来源待核对。该板对应 `micoair_h743-v2` 固件目标；MicoAir 文档称它从 PX4 1.16.0 起进入上游官方硬件支持列表，并另行提供过 1.14.3 固件。本文参数以项目使用的上游 1.14.2 接口为基线，写入前须在当前 1.14.3 固件的 QGroundControl 参数表和 PX4 控制台逐项核对。SITL 使用的 1.14.2 源码与补丁不需要、也不应刷入这块飞控。
+真机为 **MicoAir743v2-AIO-35A**，用户确认已刷 **PX4 1.14.3**，具体构建来源待核对。该板对应 `micoair_h743-v2` 固件目标；MicoAir 文档称它从 PX4 1.16.0 起进入上游官方硬件支持列表，并另行提供过 1.14.3 固件。仿真使用 MicoAir 公开的 1.14.3 源码提交 `08310a5e8ac64d02edb41523460e7dc267298deb`；真机若并非由同一源码构建，仍需核对 DDS 消息和参数差异。下表是待核对的配置基线，写入前须在当前固件的 QGroundControl 参数表和 PX4 控制台逐项确认。SITL 的时钟补丁不刷入真机。
 
 面向本项目 `vio_to_px4.py`：输出为机体原点、世界固定 FRD（航向任意）、
 机体 FRD 速度。不要重复补偿相机杆臂，也不要假定 VIO 的初始航向就是北。
@@ -30,7 +30,7 @@ px4_msgs 先使用 release/1.14 对应消息定义；这份 1.14.3 固件可能�
 板端 MicroXRCEAgent serial 接口路径和波特率按接线设置。
 
 时间：真机按已刷 1.14.3 固件的 XRCE 时间同步行为配置，ROS 使用系统时钟。相机采集时间必须转换到
-同一系统时基。只有 1.14.2 SITL 使用本项目的 RM27_SIM_CLOCK 补丁和 ROS use_sim_time。
+同一系统时基。只有 1.14.3 SITL 使用本项目的 RM27_SIM_CLOCK 补丁和 ROS use_sim_time。
 `UXRCE_DDS_SYNCT` 是 PX4 1.15 新增参数；不要假定这份 1.14.3 固件具有该参数。
 
 本板集成 Bluejay 电调，厂商说明其需要 DShot，建议从 DShot300 开始。拆下螺旋桨后核对飞控电机输出协议、四路电机映射与转向，再做台架测试；不要沿用默认 PWM 设置。板上无磁力计，航向来源和外置磁力计配置须按实机传感器方案确认。
@@ -43,8 +43,8 @@ px4_msgs 先使用 release/1.14 对应消息定义；这份 1.14.3 固件可能�
 
 依据：
 - [PX4 v1.14 参数表](https://docs.px4.io/v1.14/en/advanced_config/parameter_reference)
-- [1.14.2 VehicleOdometry](https://github.com/PX4/PX4-Autopilot/blob/v1.14.2/msg/VehicleOdometry.msg)
-- [1.14.2 DDS 话题](https://github.com/PX4/PX4-Autopilot/blob/v1.14.2/src/modules/uxrce_dds_client/dds_topics.yaml)
+- [MicoAir 1.14.3 VehicleOdometry](https://github.com/Minderring/PX4-Autopilot/blob/micoair743-v1.14.3/msg/VehicleOdometry.msg)
+- [MicoAir 1.14.3 DDS 话题](https://github.com/Minderring/PX4-Autopilot/blob/micoair743-v1.14.3/src/modules/uxrce_dds_client/dds_topics.yaml)
 - [MicoAir743v2-AIO-35A 手册](https://micoair.cn/zh/docs/flight-controller/micoair743-aio-series/micoair743v2-aio-35a-manual)
 - [MicoAir743v2 历史 PX4 1.14.3 固件资料](https://micoair.cn/zh/docs/flight-controller/micoair743/micoair743v2-flight-controller-manual)
 - [MicoAir PX4 电机设置教程](https://micoair.cn/zh/docs/ai-tutorial/ai-tutorial-2-ardupilot-px4)

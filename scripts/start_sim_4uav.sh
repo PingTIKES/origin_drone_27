@@ -243,7 +243,7 @@ start_uav() {
     fi
     UAV_MODEL_BASE[$i]="${M#gz_}"
     echo "[sim] 启动实例 $i（standalone），出生点 ENU($POSE)"
-    # PX4 1.14.2 only honors PX4_GZ_MODEL_POSE in its PX4_GZ_MODEL branch.
+    # PX4 1.14.3 only honors PX4_GZ_MODEL_POSE in its PX4_GZ_MODEL branch.
     # PX4 1.15.x also accepts PX4_SIM_MODEL; set both for the two documented flows.
     PX4_GZ_STANDALONE=1 PX4_SYS_AUTOSTART=$AUTOSTART PX4_SIM_MODEL=$M \
         PX4_GZ_MODEL="${M#gz_}" PX4_GZ_MODEL_POSE="$POSE" \
