@@ -12,13 +12,48 @@ Visualization Manager:
       Enabled: true
       Cell Size: 1
     - Class: rviz_default_plugins/Map
-      Name: ObservedLocalMap
+      Name: AccumulatedGlobalMap
       Enabled: true
+      Alpha: 0.75
+      Topic:
+        Value: /uav1/global_map
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        Depth: 1
+    - Class: rviz_default_plugins/Map
+      Name: ObservedLocalMap
+      Enabled: false
+      Alpha: 0.55
       Topic:
         Value: /uav1/local_map
         Durability Policy: Volatile
         Reliability Policy: Reliable
         Depth: 1
+    - Class: rviz_default_plugins/Odometry
+      Name: Px4EstimatedOdom
+      Enabled: true
+      Keep: 200
+      Position Tolerance: 0.1
+      Angle Tolerance: 0.1
+      Shape:
+        Value: Arrow
+        Color: 255; 100; 20
+        Alpha: 1
+      Topic:
+        Value: /uav1/odom
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        Depth: 10
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Frame Timeout: 15
+      Marker Scale: 0.35
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Frames:
+        All Enabled: true
     - Class: rviz_default_plugins/Path
       Name: LocalPath
       Enabled: true
@@ -44,7 +79,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 14
+      Distance: 38
       Pitch: 1.2
       Yaw: 0.8
 Window Geometry:

@@ -5,7 +5,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from nav_msgs.msg import OccupancyGrid
+from nav_msgs.msg import OccupancyGrid, Odometry
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
 from px4_msgs.msg import VehicleLocalPosition, VehicleAttitude
@@ -39,6 +39,7 @@ class RollingMapper(Node):
                                  f'/{p("px4_ns")}/fmu/out/vehicle_attitude', self.attitude, qos_profile_sensor_data)
         self.create_subscription(PointCloud2, 'obstacles', self.cloud, qos_profile_sensor_data)
         self.pub = self.create_publisher(OccupancyGrid, 'local_map', 1)
+        self.odom_pub = self.create_publisher(Odometry, 'odom', 10)
         self.tf_pub = TransformBroadcaster(self)
 
     def now(self): return self.get_clock().now().nanoseconds * 1e-9
@@ -53,7 +54,7 @@ class RollingMapper(Node):
         if valid:
             self.positions.append((msg.timestamp*1e-6, np.array([msg.x, -msg.y, -msg.z])))
             if self.attitudes:
-                at, _, quat = min(self.attitudes, key=lambda a: abs(a[0] - msg.timestamp*1e-6))
+                at, rotation, quat = min(self.attitudes, key=lambda a: abs(a[0] - msg.timestamp*1e-6))
                 if abs(at - msg.timestamp*1e-6) <= self.slop:
                     tf = TransformStamped()
                     tf.header.stamp = self.get_clock().now().to_msg()
@@ -67,6 +68,19 @@ class RollingMapper(Node):
                     tf.transform.rotation.y = float(quat[2])
                     tf.transform.rotation.z = float(quat[3])
                     self.tf_pub.sendTransform(tf)
+                    odom = Odometry()
+                    odom.header = tf.header
+                    odom.child_frame_id = self.body_frame
+                    odom.pose.pose.position.x = tf.transform.translation.x
+                    odom.pose.pose.position.y = tf.transform.translation.y
+                    odom.pose.pose.position.z = tf.transform.translation.z
+                    odom.pose.pose.orientation = tf.transform.rotation
+                    if msg.v_xy_valid and msg.v_z_valid and np.all(np.isfinite([msg.vx, msg.vy, msg.vz])):
+                        velocity_body = rotation.T @ np.array([msg.vx, -msg.vy, -msg.vz])
+                        odom.twist.twist.linear.x = float(velocity_body[0])
+                        odom.twist.twist.linear.y = float(velocity_body[1])
+                        odom.twist.twist.linear.z = float(velocity_body[2])
+                    self.odom_pub.publish(odom)
 
     def attitude(self, msg):
         try:

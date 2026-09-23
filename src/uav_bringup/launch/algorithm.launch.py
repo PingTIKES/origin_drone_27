@@ -94,6 +94,9 @@ def setup(context):
                   'frame_decimation':1 if mode=='software' else 3},depth_remaps))
     nodes.append(node('uav_mapping','rolling_mapper','rolling_mapper',
                       {'uav_id':uid,'px4_ns':f'px4_{uid}','cam_xyz':t_bc[:3,3].tolist()}))
+    if sim:
+        nodes.append(node('uav_mapping','global_mapper','global_mapper',
+                          {'uav_id':uid,'px4_ns':f'px4_{uid}'}))
     nodes.append(node('uav_planning','local_navigator','local_navigator',
                       {'uav_id':uid,'px4_ns':f'px4_{uid}',
                        'safety_priority_time':.35 if swarm else 2.2}))

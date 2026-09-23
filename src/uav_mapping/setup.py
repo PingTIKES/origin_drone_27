@@ -5,4 +5,5 @@ setup(name='uav_mapping', version='0.1.0', packages=['uav_mapping'],
                   ('share/uav_mapping', ['package.xml'])],
       install_requires=['setuptools', 'numpy'], zip_safe=True,
       maintainer='rm27-uav', maintainer_email='team@example.com', license='MIT',
-      entry_points={'console_scripts': ['rolling_mapper = uav_mapping.rolling_mapper:main']})
+      entry_points={'console_scripts': ['rolling_mapper = uav_mapping.rolling_mapper:main',
+                                        'global_mapper = uav_mapping.global_mapper:main']})

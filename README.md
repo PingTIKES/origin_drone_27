@@ -19,7 +19,7 @@ Gazebo 仅提供传感器和动力学；算法不读取真值位姿、理想深�
 | `uav_bringup` | 按仿真或真机参数启动算法图、传感器桥和可选 RViz | `sim`、`uav_id`、标定目录、深度来源、驱动话题 | 下列节点与话题 |
 | `uav_localization` + OpenVINS | 双目惯性里程计；转换坐标与时间戳并向 PX4 提交视觉里程计 | `/uavN/cam0/image_raw`、`cam1/image_raw`、`imu0`、实测标定 | `/uavN/odomimu`、`vio_health`、`/px4_N/fmu/in/vehicle_visual_odometry` |
 | `uav_perception` | 真机驱动话题中继、双目软件深度或硬件深度转机体系点云 | 左右目、IMU、可选深度图和 CameraInfo | `/uavN/d435i/depth/image_raw`（软件深度）、`/uavN/obstacles` |
-| `uav_mapping` | 根据 PX4 位姿和点云更新滚动局部栅格，发布机体 TF | `/uavN/obstacles`、PX4 本地位置和姿态 | `/uavN/local_map`、`/tf` 中 `uavN_local_nwu → uavN` |
+| `uav_mapping` | 点云生成滚动局部栅格；仿真累积已观测的全局栅格，并发布估计里程计和机体 TF | `/uavN/obstacles`、PX4 本地位置和姿态、`local_map` | `/uavN/local_map`、仿真 `/uavN/global_map`、`/uavN/odom`、`/tf` 中 `uavN_local_nwu → uavN` |
 | `uav_planning` | 手动目标转航点；基于新鲜局部地图规划或保持 | `/uavN/goal_pose` 或 `waypoint_in`、`local_map`、PX4 位置 | `/uavN/waypoint`、`navigation_state`、`local_path`、`desired_yaw` |
 | `uav_control` | 收到请求后管理 Offboard、解锁、起飞、航点和降落 | `waypoint`、`vio_health`、PX4 状态、`/uavN/start_mission`、`command` | `/uavN/state`、PX4 `offboard_control_mode`、`trajectory_setpoint`、`vehicle_command` |
 | `uav_swarm`、`uav_msgs` | 四机任务分配、状态和避碰消息；提供接口类型 | `/swarm/command`、`/swarm/uav_state` 等 | 各机 `waypoint_in`、`safety_waypoint` 及 `/swarm/state` |
@@ -72,6 +72,8 @@ ros2 topic hz /px4_1/fmu/out/vehicle_local_position
 ros2 topic hz /uav1/d435i/depth/image_raw
 ros2 topic hz /uav1/obstacles
 ros2 topic hz /uav1/local_map
+ros2 topic hz /uav1/global_map
+ros2 topic hz /uav1/odom
 ros2 topic hz /tf
 ros2 topic echo --once /uav1/navigation_state
 ```
@@ -81,6 +83,18 @@ ros2 topic echo --once /uav1/navigation_state
 若 `/tf` 有频率而 `obstacles`、`local_map` 均无频率，先查 `/uav1/d435i/depth/image_raw`。深度也没有频率时，检查双目左右图像及 `software_stereo` 日志；深度有频率但点云没有时，检查 `stereo_depth_node` 日志。双目看到无纹理或极暗场景时可能没有可用视差，节点会拒绝生成虚假的障碍点云。`/uav1/navigation_state=HOLD_MAP_STALE` 表示地图链路不满足导航要求。RViz 的 Fixed Frame 位于左侧 `Displays → Global Options`，而 `TF` 可视化项可以通过 `Add → TF` 增加；Fixed Frame 已设置并不保证地图话题有数据。
 
 `stereo_depth_node` 每 5 秒对没有深度输入或有深度输入却无点云的情况给出警告。查看其日志可用 `ls -t ~/.ros/log/python3_*.log | head` 找到当前进程文件，并结合 `ros2 node info /uav1/stereo_depth_node` 核对订阅名。更新代码后必须重建 `uav_perception` 并重启算法 launch；仅在旧进程运行时修改源码不会改变该进程的行为。
+
+### 在 RViz 对照地图、轨迹与坐标系
+
+仿真启动的 `global_mapper` 将 `/uav1/local_map` 中**已观察到的**空闲格和障碍格累积为 `/uav1/global_map`，固定在 `uav1_local_nwu`。默认覆盖以 VIO 起点为中心的 60×60 m、0.1 m 栅格；未看到的区域保持未知。每次 PX4 位置重置或飞行高度层改变时清空。它只供 RViz 观察，局部规划仍使用新鲜的 `/uav1/local_map`；全局图不会把 Gazebo 网格当成真值地图，也不会给规划器补全未观测区域。因此需要转向和移动传感器，才能逐渐显示整片场地。
+
+RViz 默认打开 `AccumulatedGlobalMap`、`Px4EstimatedOdom`、`TF` 和 `LocalPath`；可勾选 `ObservedLocalMap` 查看导航当前使用的局部窗口。Fixed Frame 为 `uav1_local_nwu`，TF 树应出现 `uav1_local_nwu → uav1`。`/uav1/odom` 是 PX4 的估计里程计，以同一 NWU 坐标系显示，**不是**独立真值；若 VIO 发散，全局图和里程计也会随之失真。检查 TF 可单独运行：
+
+```bash
+ros2 run tf2_ros tf2_echo uav1_local_nwu uav1
+```
+
+在确认 VIO 稳定、PX4 已融合视觉、点云与局部地图持续更新后，再在仿真中测试目标导航；若出现 `HOLD_MAP_STALE`、里程计跳变或视觉失效，停止任务并保存录包，不把积累图当作继续飞行的依据。
 
 确认仿真起飞区无遮挡后请求起飞。服务返回 `Start requested` 只表示请求已接受，实际解锁和起飞仍须观察 `/uav1/state`、PX4 状态和 Gazebo。
 
