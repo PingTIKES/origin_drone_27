@@ -375,7 +375,6 @@ class AdapterTests(unittest.TestCase):
             with patch.object(module.tempfile,'mkdtemp',return_value=directory):nodes=module.setup(context)
             names=[n.executable for n in nodes]
             self.assertIn('software_stereo',names);self.assertIn('vio_to_px4.py',names)
-            self.assertNotIn('sim_target_detector',names);self.assertNotIn('vfh_planner',names)
             depth_node=next(n for n in nodes if n.executable=='stereo_depth_node')
             self.assertFalse(depth_node.parameters[1]['require_camera_info'])
             self.assertGreater(depth_node.parameters[1]['fx'],0)
@@ -386,6 +385,21 @@ class AdapterTests(unittest.TestCase):
             with patch.object(module.tempfile,'mkdtemp',return_value=directory):swarm_nodes=module.setup(context)
             swarm_names=[n.executable for n in swarm_nodes]
             self.assertIn('swarm_agent',swarm_names);self.assertNotIn('local_goal',swarm_names)
+
+    def test_repository_has_only_new_algorithm_entrypoints(self):
+        setup=(ROOT/'setup_env.sh').read_text()
+        self.assertIn('micoair743-v1.14.3',setup)
+        self.assertIn('PX4_MSGS_COMMIT=',setup)
+        self.assertNotIn('release/1.15',setup)
+        launches={p.name for p in (ROOT/'src/uav_bringup/launch').glob('*.launch.py')}
+        self.assertEqual(launches,{'algorithm.launch.py','algorithm_swarm_sim.launch.py'})
+        for old in ('LEGACY_SIMULATION.md','scripts/run_swarm.sh','src/uav_mission',
+                    'src/uav_planning/uav_planning/field_map.py'):
+            self.assertFalse((ROOT/old).exists(),old)
+        self.assertTrue((ROOT/'src/uav_perception/uav_perception/yolo_detector.py').is_file())
+        coordinator=(ROOT/'src/uav_swarm/uav_swarm/swarm_coordinator.py').read_text()
+        self.assertNotIn('output_mode',coordinator)
+        self.assertNotIn('field_map',coordinator)
 
     def test_package_xml(self):
         for path in (ROOT/'src').glob('*/package.xml'):ET.parse(path)

@@ -14,11 +14,10 @@ setup(
     zip_safe=True,
     maintainer='rm27-uav',
     maintainer_email='team@example.com',
-    description='感知节点（仿真检测器 + YOLO 桩）',
+    description='双目深度链与待实现的实机视觉检测接口',
     license='MIT',
     entry_points={
         'console_scripts': [
-            'sim_target_detector = uav_perception.sim_target_detector:main',
             'yolo_detector = uav_perception.yolo_detector:main',
             'stereo_depth_node = uav_perception.stereo_depth_node:main',
             'software_stereo = uav_perception.software_stereo_node:main',

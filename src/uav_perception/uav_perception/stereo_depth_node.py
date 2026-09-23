@@ -14,8 +14,7 @@ D435i 深度图 → 机体坐标系障碍点云（即框架文档里的 stereo_d
 
 处理链：跳帧（frame_decimation）→ 像素抽稀（step）→ 反投影 →
         光学系转机体 FLU（含安装外参平移）→ 量程过滤 → 发布。
-默认 320x240 @ 5 Hz（step=2、15Hz 跳 2/3 帧），与 vfh_planner 注释中的
-"320x240@5Hz" 输入假设一致。
+默认以 step=2 做像素抽稀；处理频率由 frame_decimation 控制。
 """
 
 import numpy as np
@@ -48,7 +47,7 @@ class StereoDepthNode(Node):
         self.declare_parameter('cam_rotation', [0., 0., 1., -1., 0., 0., 0., -1., 0.])
         self.declare_parameter('depth_scale', .001)
         self.declare_parameter('require_camera_info', False)
-        self.declare_parameter('preserve_stamp', False)  # legacy RViz uses wall time; algorithm.launch sets True
+        self.declare_parameter('preserve_stamp', True)
         self.declare_parameter('step', 2)              # 像素抽稀步长（2→320x240）
         self.declare_parameter('frame_decimation', 3)  # 每 k 帧处理 1 帧（15→5Hz）
         self.declare_parameter('min_range', 0.3)       # 盲区/噪声截断 m
@@ -127,8 +126,7 @@ class StereoDepthNode(Node):
         y_o = (v - self.cy) * z / self.fy
         # 光学系 → 机体 FLU（x 前、y 左、z 上）+ 安装平移
         cloud = np.stack([x_o, y_o, z], axis=1) @ self.rotation.T + self.cam_xyz
-        # 新算法 launch 中深度图、地图与 TF 使用同一 ROS 时钟。
-        # 旧入口保留重打时间戳的选项。
+        # 深度图、地图与 TF 使用同一 ROS 时钟。
         hdr = Header()
         hdr.stamp = msg.header.stamp if self.preserve_stamp else self.get_clock().now().to_msg()
         hdr.frame_id = self.frame_id

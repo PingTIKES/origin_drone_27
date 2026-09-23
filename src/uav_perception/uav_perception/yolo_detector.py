@@ -6,7 +6,7 @@ RKNN YOLO 目标检测节点（实机 RK3566 用，当前为可运行桩代码�
   2. 安装 rknn-toolkit-lite2（RK3566 NPU）
   3. 将 _infer() 中的桩实现替换为 RKNN 推理（参考 airockchip/rknn_model_zoo）
 
-接口与 sim_target_detector 完全一致：
+为后续视觉任务保留的接口：
   订阅：camera/left/image_raw（sensor_msgs/Image，左目）
   发布：detections（uav_msgs/DetectionArray）
 """

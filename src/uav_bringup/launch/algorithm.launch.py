@@ -1,13 +1,11 @@
 """Same onboard algorithm for sim/real; Gazebo supplies sensors ONLY.
 
-No sim_target_detector, field_map, truth pose or GPS-position bypass.
+Gazebo only supplies sensors and dynamics; the algorithm consumes no ground truth.
 MicoAir PX4 1.14.3 SITL requires tools/prepare_algorithm_sim.py first (clock + params).
 """
-import os
 from pathlib import Path
 import tempfile
 import numpy as np
-import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction

@@ -4,7 +4,7 @@
   ========================================
 
   拓扑：地面站 WiFi 热点（或同一路由器）下的星型局域网
-    地面站   192.168.10.1   （swarm_coordinator / collision_monitor / RViz）
+    地面站   192.168.10.1   （swarm_coordinator / RViz）
     板 uav1  192.168.10.11  （MicroXRCEAgent + offboard + OpenVINS + 感知避障）
     板 uav2  192.168.10.12
     板 uav3  192.168.10.13

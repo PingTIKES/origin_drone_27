@@ -54,7 +54,7 @@ PX4_DIR=~/PX4-Autopilot-1.14.3 ./scripts/start_algorithm_sim.sh
 source /opt/ros/humble/setup.bash
 source ~/catkin_ws_ov/install/setup.bash
 source ~/origin_drone_27/install/setup.bash
-source /tmp/rm27_gz_env.sh
+source /tmp/origin_drone_27_gz_env.sh
 PYTHONNOUSERSITE=1 ros2 launch uav_bringup algorithm_swarm_sim.launch.py rviz:=true
 ```
 

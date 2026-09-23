@@ -1,27 +1,39 @@
-"""Bounded A* and conservative VFH fallback on an observed local grid.
-
-Reuse FieldMap.smooth; forbid nearest-free teleportation, unknown traversal,
-diagonal corner cutting, and shortcuts through unchecked cells.
-"""
+"""Bounded A* and conservative VFH fallback on an observed local grid."""
 import heapq
 import math
 import time
 import numpy as np
-from uav_planning.field_map import FieldMap
 from uav_mapping.rolling_grid import ray_cells
 
 
-class LocalGridPlanner(FieldMap):
+class LocalGridPlanner:
     def __init__(self, occupancy, resolution, origin):
         self.occ = np.asarray(occupancy)
         self.ny, self.nx = self.occ.shape
         self.res = resolution
         self.X_MIN, self.Y_MIN = origin
-        # FieldMap uses [x,y]; unknown must be blocked as well.
+        # Store [x,y]; unknown is blocked as well.
         self.grid = (self.occ != 0).T
 
     def _x2i(self, x): return math.floor((x - self.X_MIN) / self.res)
     def _y2j(self, y): return math.floor((y - self.Y_MIN) / self.res)
+    def _i2x(self, i): return self.X_MIN + (i + .5) * self.res
+    def _j2y(self, j): return self.Y_MIN + (j + .5) * self.res
+    def in_bounds(self, i, j): return 0 <= i < self.nx and 0 <= j < self.ny
+    def occupied(self, x, y):
+        i, j = self._x2i(x), self._y2j(y)
+        return not self.in_bounds(i, j) or self.grid[i, j]
+
+    def smooth(self, path):
+        if len(path) < 3: return path
+        out = [path[0]]
+        i = 0
+        while i < len(path) - 1:
+            j = len(path) - 1
+            while j > i + 1 and not self.line_free(path[i], path[j]): j -= 1
+            out.append(path[j])
+            i = j
+        return out
 
     def line_free(self, p0, p1):
         a, b = (self._x2i(p0[0]), self._y2j(p0[1])), (self._x2i(p1[0]), self._y2j(p1[1]))

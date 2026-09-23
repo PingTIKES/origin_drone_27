@@ -14,7 +14,6 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/TrajectoryIntent.msg"
   "msg/SwarmCommand.msg"
   "msg/SwarmAck.msg"
-  "srv/SetMission.srv"
   DEPENDENCIES std_msgs geometry_msgs builtin_interfaces
 )
 

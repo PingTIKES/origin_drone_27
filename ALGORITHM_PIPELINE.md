@@ -19,13 +19,11 @@ D430i + 独立 RGB，使用相机内置 IMU。仿真和真机统一使用 PX4 1.
                                            │
  用户目标/外部任务 → waypoint_in → local_navigator → waypoint → Offboard
                          ↑         A*主规划 / 有条件VFH / 悬停
-  collision_monitor → safety_waypoint（优先请求，也必须通过障碍检查）
+  swarm_agent → safety_waypoint（通信避碰请求，也必须通过障碍检查）
 ```
 
-新 `algorithm.launch.py` 不启动旧 sim_target_detector，不读取 field_map/npz，
-也不把 Gazebo pose 或 GPS 直接接入定位。PX4 使用惯性融合控制，这是估计器的一部分。
-独立 RGB 暂不参与这条定位/避障链；旧 YOLO 文件仍是桩，未提供训练模型时不伪造搜敌结果。
-旧集群搜索/汇聚状态机保留作历史对照，新闭环先支持单机目标导航与显式多机防碰。
+`algorithm.launch.py` 不读取 Gazebo 真值、理想深度、GPS 定位或预制场地地图。PX4 使用惯性融合控制，这是估计器的一部分。
+独立 RGB 暂不参与定位和避障；`yolo_detector.py` 仅保留后续实现接口，未提供训练模型时不产生检测结果。四机任务只通过带有效期的 `SwarmCommand` 进入每机局部导航。
 
 ## 局部地图和规划行为
 
@@ -34,8 +32,8 @@ D430i + 独立 RGB，使用相机内置 IMU。仿真和真机统一使用 PX4 1.
 - 对数占据证据：射线空闲/终点占据，同帧每格只投票一次，命中优先；保存 8s，过期变未知。
 - 飞行高度带 ±0.25m，障碍膨胀 0.35m。楼板/地面射线裁剪到高度带，只能发现空闲，
   不擦除已有墙体。高度层变化清图。不对整个视场或无深度像素宣称空闲。
-- A* 不穿未知、不斜切障碍角、不把起点吸附到墙另一边；复用 FieldMap 的拉直接口，
-  用更保守的 supercover 检查路径。目标在窗口外时只执行可达已知空间中的部分路径。
+- A* 不穿未知、不斜切障碍角、不把起点吸附到墙另一边；路径拉直也使用
+  保守的 supercover 检查。目标在窗口外时只执行可达已知空间中的部分路径。
 - A* 搜索预算 25ms；仅预算耗尽且地图新鲜时，72 扇区 VFH 从已验证通路中选短距离动作。
   无路、地图断流、定位失效不降级为盲飞。VFH 不另起节点争抢 waypoint。
 - 每次位置目标最大前移 0.4m；失去上游目标后固定位置悬停。PX4 速度上限另设 0.5m/s；
@@ -47,61 +45,17 @@ D430i + 独立 RGB，使用相机内置 IMU。仿真和真机统一使用 PX4 1.
 
 ## Ubuntu：先运行真正的算法仿真
 
-仿真依赖：Ubuntu 22.04 / ROS2 Humble、MicoAir PX4 **1.14.3 SITL**、匹配的 Gazebo/ros_gz、
-OpenVINS；px4_msgs 必须匹配 release/1.14。`setup_env.sh` 只安装历史
-PX4 1.15.4 / px4_msgs release/1.15 环境，**不能用于这条算法链**。
-需单独准备 MicoAir 1.14.3 的 PX4 源码、release/1.14 的 px4_msgs、OpenVINS 与 MicroXRCEAgent。
-工作空间路径应只含英文字符：本机 ROS 2 接口生成器在中文目录下构建失败。
-PX4 建议完整克隆并保留子模块标签；浅克隆的 NuttX 子模块缺少版本标签时，
-`px_update_git_header.py` 会报 `IndexError`。若使用浅克隆，需要补齐对应
-子模块提交与 NuttX 标签后再编译。
+仿真依赖为 Ubuntu 22.04、ROS 2 Humble、MicoAir PX4 **1.14.3 SITL**、Gazebo Garden、OpenVINS、MicroXRCEAgent 和 `px4_msgs release/1.14`。工作空间路径必须只含英文字符；ROS 2 接口生成器在中文路径下会构建失败。
 
-首次准备源码时，使用 MicoAir 为 `micoair_h743-v2` 公布的 1.14.3 分支，并固定提交
-`08310a5e8ac64d02edb41523460e7dc267298deb`。已安装其他 PX4 版本的机器，请为
-1.14.3 选独立目录，并在补丁命令及启动命令中使用同一目录。该源码分支用于构建
-SITL；真机现有固件的构建来源仍需单独核对，不能仅凭“1.14.3”断定二进制完全相同。
+统一使用安装脚本，不再混装其他 PX4 或消息版本：
 
 ```bash
-git clone --recursive --branch micoair743-v1.14.3 \
-  https://github.com/Minderring/PX4-Autopilot.git ~/PX4-Autopilot-1.14.3
-cd ~/PX4-Autopilot-1.14.3
-git checkout 08310a5e8ac64d02edb41523460e7dc267298deb
-git submodule update --init --recursive
-bash Tools/setup/ubuntu.sh --no-nuttx
-
-mkdir -p ~/catkin_ws_ov/src
-git clone https://github.com/rpng/open_vins.git ~/catkin_ws_ov/src/open_vins
-
+git clone https://github.com/PingTIKES/origin_drone_27.git ~/origin_drone_27
 cd ~/origin_drone_27
-mkdir -p third_party
-git clone --branch release/1.14 https://github.com/PX4/px4_msgs.git third_party/px4_msgs
-ln -s ../third_party/px4_msgs src/px4_msgs
+./setup_env.sh sim
 ```
 
-另需安装与 PX4 1.14.3 兼容的 `MicroXRCEAgent` 和 Gazebo Garden 对应的
-`ros_gz_bridge`；启动前用 `command -v MicroXRCEAgent` 与
-`ros2 pkg prefix ros_gz_bridge` 检查。不要让 `setup_env.sh` 安装另一套 PX4。
-
-```bash
-cd ~/origin_drone_27
-source /opt/ros/humble/setup.bash
-rosdep install --from-paths src --ignore-src -r -y
-
-# 对 Ubuntu 上已有源码做有锚点检查、可备份回退的小补丁
-python3 tools/prepare_algorithm_sim.py \
-  --px4 ~/PX4-Autopilot-1.14.3 --openvins ~/catkin_ws_ov/src/open_vins
-
-cd ~/PX4-Autopilot-1.14.3
-DONT_RUN=1 make px4_sitl_default
-cd ~/catkin_ws_ov
-colcon build --packages-select ov_core ov_init ov_msckf ov_eval
-source install/setup.bash
-cd ~/origin_drone_27
-colcon build --symlink-install
-source install/setup.bash
-PYTHONNOUSERSITE=1 python3 tools/test_algorithm_stack.py
-chmod +x scripts/start_algorithm_sim.sh
-```
+脚本固定 MicoAir PX4 提交 `08310a5e8ac64d02edb41523460e7dc267298deb`、`px4_msgs release/1.14` 的已测提交和 OpenVINS 的已测提交，随后应用受锚点检查的补丁并完成构建。已有依赖目录版本不一致时脚本会停止，不会静默覆盖。真机板执行 `./setup_env.sh onboard`，不下载或编译 PX4 SITL。
 
 补丁原因：该 1.14.3 源码无 UXRCE_DDS_SYNCT 参数，SITL 通过仅 POSIX 编译的
 RM27_SIM_CLOCK 环境开关使 DDS 保持模拟时基；真实飞控不使用该开关。
@@ -110,13 +64,13 @@ OpenVINS 补丁让成功静止初始化后可发布状态，避免“等 VIO 才
 本次 Ubuntu 单机起飞与短时悬停的验证结果见文末；目标导航等项目仍需逐项验收。
 
 ```bash
-# 终端 A：先起单机环境；不传 1 则默认四机。关闭旧的 WITH_RVIZ 导航入口
+# 终端 A：先起单机环境；不传 1 则默认四机
 PX4_DIR=~/PX4-Autopilot-1.14.3 ./scripts/start_algorithm_sim.sh 1
 
 # 终端 B：先从一架的完整算法开始
 source ~/catkin_ws_ov/install/setup.bash
 source ~/origin_drone_27/install/setup.bash
-source /tmp/rm27_gz_env.sh
+source /tmp/origin_drone_27_gz_env.sh
 PYTHONNOUSERSITE=1 ros2 launch uav_bringup algorithm.launch.py sim:=true uav_id:=1 rviz:=true
 ```
 
@@ -129,7 +83,7 @@ ros2 service call /uav1/start_mission std_srvs/srv/Trigger '{}'
 
 Gazebo 世界位姿确认悬停到约 2m，且 `/uav1/obstacles`、`/uav1/local_map`
 持续发布后，在 RViz 用 2D Goal 选择局部目标（目标高度固定为 altitude 参数）。
-Fixed Frame 是 `uav1_local_nwu`，与旧 map 的混合坐标约定隔离。
+Fixed Frame 是 `uav1_local_nwu`。
 也可以直接发目标：
 
 ```bash
@@ -142,7 +96,7 @@ ros2 topic pub --once /uav1/command std_msgs/msg/String "{data: land}"
 服务返回 `Start requested` 只表示接受请求；VIO 无效时节点仍保持 `INIT`，
 不能把服务返回 `success=True` 当作已解锁。起飞/降落由 PX4 控制，
 不由二维地图证明其竖直通道安全。
-新仿真每轮重启时，应重启算法节点及桥，重新 source 分区文件。不要同时运行旧 launch。
+仿真每轮重启时，应重启算法节点及桥，并重新 source 分区文件。
 第二架可起相同 launch，`uav_id:=2 bridge_clock:=false`；只保留一个 /clock 发布桥。
 
 ## 真机标定：需要实际数据，不能用示例数值冒充
@@ -220,15 +174,14 @@ wall_rate 分开报告，避免将慢速仿真的墙钟帧率误判为算法实�
 弱纹理、曝光变化、转弯、遮挡、U 形障碍、断图像、停导航、断通信、VIO 重置。
 无数据的流会报告 count=0，不能被当成性能通过。
 
-多机防碰需先对齐各机 VIO 的航向与原点，再给 fleet_safety.launch.py 提供实测
-alignment_file（shared_heading_aligned: true；spawn_offsets: [x1,y1,x2,y2,...]）。
-一个布尔值不执行对齐，它是操作前置条件声明；未满足时不要启动共享距离判断。
-该 launch 只起一份 collision_monitor，其请求不能绕过各机局部导航。
+多机防碰需先实测并对齐各机 VIO 的航向与原点，再把平移和航向写入每机 `swarm_agent` 参数。
+仿真 `algorithm_swarm_sim.launch.py` 使用已知出生点；真机没有完成对齐时不得启用共享距离判断。
+`swarm_agent` 的安全请求仍进入 `local_navigator`，不能绕过在线障碍地图。
 
 ## 验证范围与参考
 
 已实现离线几何、节点回调的消息桩测试、OpenCV 配置读取和人工纹理双目深度测试。
-MicoAir PX4 1.14.3 SITL 已编译，OpenVINS 4 个包和本工作空间 10 个包完成构建，36 项离线测试通过。在 Gazebo `default` 世界，单机模型创建、MicroXRCEAgent 连接与 PX4 ROS 状态话题已验证；视觉融合、起飞和导航尚未在 1.14.3 上验证。
+MicoAir PX4 1.14.3 SITL 已编译，OpenVINS 4 个包和清理后的本工作空间 9 个包完成构建，38 项离线测试通过。在 Gazebo `default` 世界，单机模型创建、MicroXRCEAgent 连接与 PX4 ROS 状态话题已验证；视觉融合、起飞和导航尚未在 1.14.3 上验证。
 
 此前在 Ubuntu 22.04 上使用 PX4 v1.14.2 和 OpenVINS 完成单机 SITL 验证；这不是 1.14.3 的飞行验收结果。单机 Gazebo 模型、Agent、
 相机与 IMU 话题当时已验证。修正出生点的启动参数后，模型处于预期

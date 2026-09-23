@@ -2,7 +2,7 @@
 <package format="3">
   <name>uav_planning</name>
   <version>0.1.0</version>
-  <description>RViz 打点导航(A*) + 机间防碰 + VFH 避障模板</description>
+  <description>深度局部地图上的目标规划</description>
   <maintainer email="team@example.com">rm27-uav</maintainer>
   <license>MIT</license>
 

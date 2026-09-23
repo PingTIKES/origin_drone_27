@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- =====================================================================
-  RMUC2025 真实赛场世界（适配 PX4 v1.15.4 + gz-garden 四机集群仿真）
+  RMUC2025 真实赛场世界（适配 MicoAir PX4 1.14.3 + gz-garden 四机集群仿真）
 
   场地模型来源：SMBU-PolarBear-Robotics-Team/rmu_gazebo_simulator
     resource/models/rmuc_2025（全场 STL 网格，29.16 m x 16.16 m 含围挡）
@@ -233,7 +233,7 @@
       </link>
     </model>
 
-    <!-- 搜索目标标记（亮绿色立柱，NED (-9, 2, 0)，与 params.yaml 的
+    <!-- 搜索目标标记（亮绿色立柱，NED (-9, 2, 0)
          target_world 对应；注意核对与真实场地几何是否干涉，可整体挪位） -->
     <model name="target_marker">
       <static>true</static>

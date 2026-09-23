@@ -27,6 +27,5 @@ def generate_launch_description():
                         name='swarm_coordinator',output='screen',parameters=[{
                             'use_sim_time':True,'num_uavs':4,
                             'spawn_offsets':[v for pair in offsets for v in pair],
-                            'output_mode':'swarm_command','use_static_map':False,
                             'base_alt':2.0,'alt_layer':.5}]))
     return LaunchDescription(actions)

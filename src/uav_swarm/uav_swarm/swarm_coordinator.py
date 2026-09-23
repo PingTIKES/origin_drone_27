@@ -9,19 +9,12 @@
   LAND          —— 到位后向各机下发 land 指令
   DONE
 
-坐标：公共坐标系 = 各机本地 NED + 出生点偏移（spawn_offsets，与
-scripts/start_sim_4uav.sh 的 PX4_GZ_MODEL_POSE 一一对应，注意
-PX4 gz_bridge 的换算 NED=(enu_y, enu_x)）。下发给某机的航点会
-自动减去该机的出生点偏移，转换到其本地系。
-
-静态避障：每个任务航点（搜索/汇聚/返航）都先经 uav_planning.field_map
-的 A* 在赛场占据栅格（真实场地网格离线光栅化）上规划、视线拉直后拆成
-子航点依次下发；落入障碍的航点自动吸附到最近自由点。uav_planning
-不可用时退化为直航（无避障），日志会有警告。
+坐标：公共坐标系 = 各机本地 NWU 经显式出生点对齐后的 swarm_ned 任务系。
+协调器只发布带有效期的 SwarmCommand；每机 swarm_agent 转换回本地目标，
+local_navigator 必须用在线深度局部地图完成实际避障。
 """
 
 import math
-import os
 
 import rclpy
 from rclpy.node import Node
@@ -29,8 +22,6 @@ from rclpy.qos import (QoSProfile, QoSReliabilityPolicy,
                        QoSDurabilityPolicy, QoSHistoryPolicy)
 
 from std_msgs.msg import String
-from geometry_msgs.msg import Point
-from px4_msgs.msg import VehicleLocalPosition
 from uav_msgs.msg import DetectionArray, SwarmState, SwarmCommand, SwarmAck
 
 
@@ -65,8 +56,6 @@ class SwarmCoordinator(Node):
         self.declare_parameter('alt_layer', 0.5)            # 相邻机高度层差 m
         self.declare_parameter('converge_time', 15.0)       # 汇聚盘旋时间 s
         self.declare_parameter('wp_timeout', 30.0)          # 单航点超时 s（未到达也切下一个）
-        self.declare_parameter('output_mode', 'legacy')     # legacy or swarm_command
-        self.declare_parameter('use_static_map', True)      # new stack plans locally from D435i
 
         self.n = int(self.get_parameter('num_uavs').value)
         self.spacing = float(self.get_parameter('spawn_spacing').value)
@@ -76,9 +65,6 @@ class SwarmCoordinator(Node):
         self.alt_layer = float(self.get_parameter('alt_layer').value)
         self.converge_time = float(self.get_parameter('converge_time').value)
         self.wp_timeout = float(self.get_parameter('wp_timeout').value)
-        self.output_mode = str(self.get_parameter('output_mode').value)
-        if self.output_mode not in ('legacy','swarm_command'):
-            raise ValueError('output_mode must be legacy or swarm_command')
 
         # 出生点偏移（公共系 = 本地系 + 偏移）
         flat = list(self.get_parameter('spawn_offsets').value)
@@ -93,37 +79,8 @@ class SwarmCoordinator(Node):
         self.uav_alt = {i: -(self.base_alt + (i - 1) * self.alt_layer)
                         for i in range(1, self.n + 1)}
 
-        # ---- 静态避障（A*，占据栅格来自真实场地网格的离线光栅化） ----
-        self.declare_parameter('map_file', '')   # 空 = 用 uav_planning 自带的栅格
-        map_file = str(self.get_parameter('map_file').value)
-        if not map_file:
-            try:
-                from ament_index_python.packages import get_package_share_directory
-                map_file = os.path.join(
-                    get_package_share_directory('uav_planning'),
-                    'maps', 'rmuc_2025_occ.npz')
-            except Exception:
-                map_file = ''
-        self.planner = None
-        if bool(self.get_parameter('use_static_map').value):
-            try:
-                from uav_planning.field_map import FieldMap
-                self.planner = FieldMap(map_file=map_file)
-                src = map_file if getattr(self.planner, '_from_file', False) \
-                    else '内置解析障碍（简化场地）'
-                self.get_logger().info(
-                    f'A* 避障已启用，地图来源：{src}'
-                    f'（{self.planner.nx}x{self.planner.ny} 栅格）')
-            except Exception as exc:  # noqa: BLE001 - legacy mode degrades explicitly
-                self.get_logger().warn(
-                    f'uav_planning 不可用（{exc}），退化为直航（无避障）')
-        else:
-            self.get_logger().info('协调器静态地图已关闭；障碍规划由每机滚动地图执行')
-
         # ---- 接口 ----
         qos = px4_qos()
-        self.wp_pubs = {}
-        self.cmd_pubs = {}
         self.uav_state = {}       # offboard 节点状态
         self.uav_pos = {}         # 公共系位置 (x, y, z)
         self.uav_pos_at = {}
@@ -132,14 +89,6 @@ class SwarmCoordinator(Node):
         self.create_subscription(SwarmState, '/swarm/uav_state', self._swarm_state_cb, qos)
         self.create_subscription(SwarmAck, '/swarm/ack', self._ack_cb, 20)
         for i in range(1, self.n + 1):
-            self.wp_pubs[i] = self.create_publisher(Point, f'/uav{i}/waypoint', 10)
-            self.cmd_pubs[i] = self.create_publisher(String, f'/uav{i}/command', 10)
-            self.create_subscription(String, f'/uav{i}/state',
-                                     self._make_state_cb(i), 10)
-            if self.output_mode == 'legacy':
-                self.create_subscription(
-                    VehicleLocalPosition, f'/px4_{i}/fmu/out/vehicle_local_position',
-                    self._make_pos_cb(i), qos)
             self.create_subscription(
                 DetectionArray, f'/uav{i}/detections',
                 self._make_det_cb(i), 10)
@@ -162,14 +111,9 @@ class SwarmCoordinator(Node):
             f'出生点 {[self.spawn_offset[i] for i in range(1, self.n + 1)]}')
 
     # ---------------- 回调 ----------------
-    def _make_state_cb(self, i):
-        def cb(msg: String):
-            self.uav_state[i] = msg.data
-        return cb
-
     def _swarm_state_cb(self,msg):
         i=int(msg.uav_id)
-        if self.output_mode != 'swarm_command' or not 1 <= i <= self.n or not msg.pose_valid:return
+        if not 1 <= i <= self.n or not msg.pose_valid:return
         values=(msg.position.x,msg.position.y,msg.position.z)
         if not all(math.isfinite(v) for v in values):return
         self.uav_pos[i]=values
@@ -179,12 +123,6 @@ class SwarmCoordinator(Node):
     def _ack_cb(self,msg):
         if not msg.accepted:
             self.get_logger().warn(f'UAV{msg.uav_id} rejected command {msg.command_id}: {msg.reason}')
-
-    def _make_pos_cb(self, i):
-        def cb(msg: VehicleLocalPosition):
-            ox, oy = self.spawn_offset[i]
-            self.uav_pos[i] = (msg.x + ox, msg.y + oy, msg.z)
-        return cb
 
     def _make_det_cb(self, i):
         def cb(msg: DetectionArray):
@@ -225,29 +163,24 @@ class SwarmCoordinator(Node):
         return plans
 
     def _pub_waypoint(self, i, wx, wy, new_command=True):
-        """Publish either the legacy local point or a TTL-bounded common-frame command."""
-        if self.output_mode == 'legacy':
-            ox, oy = self.spawn_offset[i]
-            self.wp_pubs[i].publish(Point(x=wx-ox,y=wy-oy,z=self.uav_alt[i]))
-        else:
-            if new_command:self.command_seq[i]+=1
-            msg=SwarmCommand()
-            msg.header.stamp=self.get_clock().now().to_msg()
-            msg.header.frame_id='swarm_ned'
-            msg.target_uav=i;msg.mission_id=1;msg.command_id=self.command_seq[i]
-            valid=self.get_clock().now().nanoseconds*1e-9+.7
-            msg.valid_until.sec,msg.valid_until.nanosec=int(valid),int((valid-int(valid))*1e9)
-            msg.command='goto'
-            msg.target=Point(x=float(wx),y=float(wy),z=float(self.uav_alt[i]))
-            self.swarm_command_pub.publish(msg)
+        """Publish a TTL-bounded common-frame command."""
+        if new_command:self.command_seq[i]+=1
+        msg=SwarmCommand()
+        msg.header.stamp=self.get_clock().now().to_msg()
+        msg.header.frame_id='swarm_ned'
+        msg.target_uav=i;msg.mission_id=1;msg.command_id=self.command_seq[i]
+        valid=self.get_clock().now().nanoseconds*1e-9+.7
+        msg.valid_until.sec,msg.valid_until.nanosec=int(valid),int((valid-int(valid))*1e9)
+        msg.command='goto'
+        msg.target.x=float(wx);msg.target.y=float(wy);msg.target.z=float(self.uav_alt[i])
+        self.swarm_command_pub.publish(msg)
         if new_command:self.wp_sent_time[i] = self.get_clock().now()
 
     def _reached(self, i, wx, wy):
         if i not in self.uav_pos:
             return False
-        if self.output_mode == 'swarm_command':
-            stamp=self.uav_pos_at.get(i)
-            if stamp is None or (self.get_clock().now()-stamp).nanoseconds*1e-9>.6:return False
+        stamp=self.uav_pos_at.get(i)
+        if stamp is None or (self.get_clock().now()-stamp).nanoseconds*1e-9>.6:return False
         x, y, z = self.uav_pos[i]
         d = math.sqrt((x - wx) ** 2 + (y - wy) ** 2 + (z - self.uav_alt[i]) ** 2)
         return d < 0.4
@@ -258,32 +191,11 @@ class SwarmCoordinator(Node):
             return True
         return (self.get_clock().now() - t).nanoseconds / 1e9 > self.wp_timeout
 
-    # ---------------- 避障路径（A*） ----------------
-    def _assign_goal(self, i, goal, fallback_direct=False):
-        """为 i 号机规划到 goal（公共系 NED）的路径并装入子航点队列。
-
-        路径 = A*（落入障碍的起终点自动吸附最近自由点）+ 视线拉直。
-        规划失败时：fallback_direct=True 退化为直航并告警，否则返回 False。
-        """
+    def _assign_goal(self, i, goal):
+        """Queue a task goal; obstacle planning remains onboard each aircraft."""
         goal = (float(goal[0]), float(goal[1]))
-        start = self.uav_pos.get(i)
-        sx, sy = (start[0], start[1]) if start else self.spawn_offset[i]
         self.cur_sub_wp[i] = None
-        if self.planner is None:
-            self.path_queue[i] = [goal]
-            return True
-        path = self.planner.astar((sx, sy), goal)
-        if not path:
-            if fallback_direct:
-                self.get_logger().warn(
-                    f'UAV{i} 到 ({goal[0]:.1f},{goal[1]:.1f}) 规划失败，退化为直航')
-                self.path_queue[i] = [goal]
-                return True
-            return False
-        path = self.planner.smooth(path)
-        if path and math.hypot(path[0][0] - sx, path[0][1] - sy) < 0.5:
-            path = path[1:]                # 去掉≈当前位置的起点
-        self.path_queue[i] = list(path) if path else [goal]
+        self.path_queue[i] = [goal]
         return True
 
     def _follow_queue(self, i):
@@ -328,8 +240,7 @@ class SwarmCoordinator(Node):
                 self.get_logger().info('搜索完毕未发现目标，返航')
                 self.state = 'RETURN'
                 for i in range(1, self.n + 1):
-                    self._assign_goal(i, self.spawn_offset[i],
-                                      fallback_direct=True)
+                    self._assign_goal(i, self.spawn_offset[i])
 
         elif self.state == 'CONVERGE':
             tx, ty = self.target
@@ -338,8 +249,7 @@ class SwarmCoordinator(Node):
                 offsets = [(1.5, 0.0), (0.0, 1.5), (-1.5, 0.0), (0.0, -1.5)]
                 for i in range(1, self.n + 1):
                     dx, dy = offsets[(i - 1) % 4]
-                    self._assign_goal(i, (tx + dx, ty + dy),
-                                      fallback_direct=True)
+                    self._assign_goal(i, (tx + dx, ty + dy))
                 self.converge_assigned = True
             for i in range(1, self.n + 1):
                 self._follow_queue(i)      # 走完即在目标四周悬停
@@ -348,8 +258,7 @@ class SwarmCoordinator(Node):
                 self.get_logger().info('汇聚完成，集群返航')
                 self.state = 'RETURN'
                 for i in range(1, self.n + 1):
-                    self._assign_goal(i, self.spawn_offset[i],
-                                      fallback_direct=True)
+                    self._assign_goal(i, self.spawn_offset[i])
 
         elif self.state == 'RETURN':
             all_home = True
@@ -362,14 +271,11 @@ class SwarmCoordinator(Node):
 
         elif self.state == 'LAND':
             for i in range(1, self.n + 1):
-                if self.output_mode == 'legacy':
-                    self.cmd_pubs[i].publish(String(data='land'))
-                else:
-                    cmd=SwarmCommand();cmd.header.stamp=self.get_clock().now().to_msg()
-                    cmd.target_uav=i;cmd.mission_id=1;cmd.command_id=1000000+i;cmd.command='land'
-                    valid=self.get_clock().now().nanoseconds*1e-9+1.
-                    cmd.valid_until.sec,cmd.valid_until.nanosec=int(valid),int((valid-int(valid))*1e9)
-                    self.swarm_command_pub.publish(cmd)
+                cmd=SwarmCommand();cmd.header.stamp=self.get_clock().now().to_msg()
+                cmd.target_uav=i;cmd.mission_id=1;cmd.command_id=1000000+i;cmd.command='land'
+                valid=self.get_clock().now().nanoseconds*1e-9+1.
+                cmd.valid_until.sec,cmd.valid_until.nanosec=int(valid),int((valid-int(valid))*1e9)
+                self.swarm_command_pub.publish(cmd)
             if all(self.uav_state.get(i) in ('IDLE', 'DONE', 'LAND')
                    for i in range(1, self.n + 1)):
                 self.state = 'DONE'

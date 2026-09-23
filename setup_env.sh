@@ -1,73 +1,96 @@
 #!/usr/bin/env bash
-# =============================================================
-# RoboMaster 2027 四机集群 —— 仿真环境一键安装脚本
-# 仅适用历史 PX4 1.15.4 / px4_msgs release/1.15 仿真流程。
-# 当前视觉算法使用 MicoAir PX4 1.14.3 / px4_msgs release/1.14，见 README.md。
-# 适用：Ubuntu 22.04 x86_64 调试机（实机 RK3566 请见脚本尾部说明）
-# 参考：PX4 Devguide / px4_ros_com / open_vins 官方文档
-# =============================================================
-set -e
-WS_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Ubuntu 22.04 / ROS 2 Humble setup for the PX4 1.14.3 algorithm stack.
+# Usage: ./setup_env.sh sim | ./setup_env.sh onboard
+set -euo pipefail
 
-echo "===== [1/6] 安装 ROS2 Humble 基础依赖 ====="
+MODE="${1:-sim}"
+if [[ "$MODE" != sim && "$MODE" != onboard ]]; then
+    echo 'Usage: ./setup_env.sh [sim|onboard]' >&2
+    exit 2
+fi
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PX4_DIR="${PX4_DIR:-$HOME/PX4-Autopilot-1.14.3}"
+OV_WS="${OV_WS:-$HOME/catkin_ws_ov}"
+PX4_COMMIT=08310a5e8ac64d02edb41523460e7dc267298deb
+PX4_MSGS_COMMIT=ffb6e80e1c17e5714395611a020c282a87af8fa4
+OPENVINS_COMMIT=69488123ed9362dd44b6f28e7f4680abbff1442b
+
+if [[ ! -f /opt/ros/humble/setup.bash ]]; then
+    echo 'Install ROS 2 Humble before running setup_env.sh.' >&2
+    exit 1
+fi
+source /opt/ros/humble/setup.bash
+
 sudo apt update
-sudo apt install -y python3-pip python3-colcon-common-extensions \
-    ros-humble-ament-cmake-python ros-humble-geometry-msgs \
-    ros-humble-sensor-msgs ros-humble-nav-msgs ros-humble-cv-bridge \
-    git wget curl build-essential cmake
+sudo apt install -y python3-colcon-common-extensions python3-rosdep python3-numpy \
+    python3-yaml python3-opencv python3-pip git curl build-essential cmake \
+    ros-humble-cv-bridge ros-humble-rmw-cyclonedds-cpp
 
-echo "===== [2/6] 克隆并安装 PX4-Autopilot（SITL + Gazebo 工具链） ====="
-if [ ! -d "$HOME/PX4-Autopilot" ]; then
-    git clone --depth 1 --branch v1.15.4 https://github.com/PX4/PX4-Autopilot.git "$HOME/PX4-Autopilot" --recursive
+if [[ ! -d "$OV_WS/src/open_vins/.git" ]]; then
+    mkdir -p "$OV_WS/src"
+    git clone https://github.com/rpng/open_vins.git "$OV_WS/src/open_vins"
+    git -C "$OV_WS/src/open_vins" checkout "$OPENVINS_COMMIT"
 fi
-cd "$HOME/PX4-Autopilot"
-# PX4 官方环境脚本：安装编译链 + Gazebo（22.04 对应 gz-garden）
-bash ./Tools/setup/ubuntu.sh --no-nuttx
-# 编译 SITL（首次约 20-40 分钟）
-DONT_RUN=1 make px4_sitl_default
-
-echo "===== [3/6] 安装 Micro-XRCE-DDS-Agent（PX4 <-> ROS2 桥） ====="
-# 注意：必须用 v2.4.3+。v2.4.2 依赖的 Fast-DDS 2.12.x 分支已被官方删除，
-# 会报 "fatal: 无效引用：2.12.x"；v2.4.3 改用 2.14.x，且与 PX4 1.15 兼容。
-if ! command -v MicroXRCEAgent &> /dev/null; then
-    [ -d "$HOME/Micro-XRCE-DDS-Agent" ] || \
-        git clone https://github.com/eProsima/Micro-XRCE-DDS-Agent.git "$HOME/Micro-XRCE-DDS-Agent"
-    cd "$HOME/Micro-XRCE-DDS-Agent"
-    git fetch --tags && git checkout v2.4.3
-    rm -rf build && mkdir build && cd build   # 清掉旧缓存，避免沿用失效引用
-    cmake ..
-    make -j$(nproc)
-    sudo make install
-    sudo ldconfig /usr/local/lib/
+if [[ "$(git -C "$OV_WS/src/open_vins" rev-parse HEAD)" != "$OPENVINS_COMMIT" ]]; then
+    echo "OpenVINS must be the tested commit $OPENVINS_COMMIT." >&2
+    exit 1
 fi
 
-echo "===== [4/6] 克隆 ROS2 依赖包到 third_party ====="
-mkdir -p "$WS_DIR/third_party"
-cd "$WS_DIR/third_party"
-[ -d px4_msgs ]        || git clone --depth 1 --branch release/1.15 https://github.com/PX4/px4_msgs.git
-[ -d px4_ros_com ]     || git clone --depth 1 https://github.com/PX4/px4_ros_com.git
-[ -d BehaviorTree.CPP ]|| git clone --depth 1 --branch 4.6.2 https://github.com/BehaviorTree/BehaviorTree.CPP.git
-# OpenVINS（实机视觉定位；仿真机可选，取消注释即可）
-# [ -d open_vins ]     || git clone --depth 1 https://github.com/rpng/open_vins.git
+mkdir -p "$ROOT_DIR/third_party"
+if [[ ! -d "$ROOT_DIR/third_party/px4_msgs/.git" ]]; then
+    git clone --branch release/1.14 https://github.com/PX4/px4_msgs.git \
+        "$ROOT_DIR/third_party/px4_msgs"
+    git -C "$ROOT_DIR/third_party/px4_msgs" checkout "$PX4_MSGS_COMMIT"
+fi
+if [[ "$(git -C "$ROOT_DIR/third_party/px4_msgs" rev-parse HEAD)" != "$PX4_MSGS_COMMIT" ]]; then
+    echo "px4_msgs must be release/1.14 commit $PX4_MSGS_COMMIT." >&2
+    exit 1
+fi
+if [[ ! -e "$ROOT_DIR/src/px4_msgs" ]]; then
+    ln -s ../third_party/px4_msgs "$ROOT_DIR/src/px4_msgs"
+fi
 
-echo "===== [5/6] 把 third_party 软链进 src（colcon 统一编译） ====="
-cd "$WS_DIR/src"
-for p in px4_msgs px4_ros_com BehaviorTree.CPP; do
-    [ -e "$p" ] || ln -s "../third_party/$p" "$p"
-done
+if ! command -v MicroXRCEAgent >/dev/null 2>&1; then
+    AGENT_DIR="${AGENT_DIR:-$HOME/Micro-XRCE-DDS-Agent}"
+    if [[ ! -d "$AGENT_DIR/.git" ]]; then
+        git clone --branch v2.4.3 https://github.com/eProsima/Micro-XRCE-DDS-Agent.git "$AGENT_DIR"
+    fi
+    cmake -S "$AGENT_DIR" -B "$AGENT_DIR/build"
+    cmake --build "$AGENT_DIR/build" -j "$(nproc)"
+    sudo cmake --install "$AGENT_DIR/build"
+    sudo ldconfig
+fi
 
-echo "===== [6/6] 配置 CycloneDDS（嵌入式/多机更轻量） ====="
-sudo apt install -y ros-humble-rmw-cyclonedds-cpp
-grep -q RMW_IMPLEMENTATION "$HOME/.bashrc" || \
-    echo 'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp' >> "$HOME/.bashrc"
+if [[ "$MODE" == sim ]]; then
+    if ! ros2 pkg prefix ros_gz_bridge >/dev/null 2>&1; then
+        sudo apt install -y ros-humble-ros-gzgarden
+    fi
+    if [[ ! -d "$PX4_DIR/.git" ]]; then
+        git clone --recursive --branch micoair743-v1.14.3 \
+            https://github.com/Minderring/PX4-Autopilot.git "$PX4_DIR"
+        git -C "$PX4_DIR" checkout "$PX4_COMMIT"
+    fi
+    if [[ "$(git -C "$PX4_DIR" rev-parse HEAD)" != "$PX4_COMMIT" ]]; then
+        echo "PX4_DIR must be the pinned MicoAir PX4 1.14.3 commit $PX4_COMMIT." >&2
+        exit 1
+    fi
+    git -C "$PX4_DIR" submodule update --init --recursive
+    if ! ros2 pkg prefix ros_gz_bridge >/dev/null 2>&1; then
+        echo 'Install Gazebo Garden and the matching ros_gz_bridge before simulation.' >&2
+        exit 1
+    fi
+    python3 "$ROOT_DIR/tools/prepare_algorithm_sim.py" \
+        --px4 "$PX4_DIR" --openvins "$OV_WS/src/open_vins"
+    (cd "$PX4_DIR" && bash Tools/setup/ubuntu.sh --no-nuttx && DONT_RUN=1 make px4_sitl_default)
+else
+    sudo apt install -y ros-humble-realsense2-camera
+    python3 "$ROOT_DIR/tools/prepare_algorithm_sim.py" --openvins "$OV_WS/src/open_vins"
+fi
 
-echo ""
-echo "================ 安装完成 ================"
-echo "下一步："
-echo "  source /opt/ros/humble/setup.bash"
-echo "  cd $WS_DIR && colcon build --packages-up-to uav_bringup uav_swarm"
-echo "  ./scripts/start_sim_4uav.sh      # 终端 A：4 机仿真"
-echo "  ./scripts/run_swarm.sh           # 终端 B：集群任务"
-echo ""
-echo "【实机 RK3566】只需执行本脚本的 [1] [4] [6]，不装 PX4-SITL/Gazebo；"
-echo "  Agent 改用串口：MicroXRCEAgent serial --dev /dev/ttyS1 -b 921600"
+rosdep install --from-paths "$ROOT_DIR/src" --ignore-src -r -y
+(cd "$OV_WS" && colcon build --packages-select ov_core ov_init ov_msckf ov_eval)
+source "$OV_WS/install/setup.bash"
+(cd "$ROOT_DIR" && colcon build --symlink-install)
+
+echo "Ready: PX4 1.14.3 algorithm workspace ($MODE)."
+echo "Source $OV_WS/install/setup.bash and $ROOT_DIR/install/setup.bash in each terminal."
