@@ -23,16 +23,38 @@ class SoftwareStereo(Node):
         self.pub = self.create_publisher(Image,'d435i/depth/image_raw',1)
         self.info = self.create_publisher(CameraInfo,'d435i/depth/camera_info',1)
         self.subs = [message_filters.Subscriber(self,Image,f'cam{i}/image_raw',qos_profile=qos_profile_sensor_data) for i in range(2)]
+        self.image_counts = [0, 0]
+        self.pair_count = 0
+        self.depth_count = 0
+        for i, sub in enumerate(self.subs):
+            sub.registerCallback(lambda _msg, index=i: self._count_image(index))
         self.sync = message_filters.ApproximateTimeSynchronizer(self.subs,5,p('sync_slop'))
         self.sync.registerCallback(self.callback)
+        self.create_timer(5., self.report_status)
+
+    def _count_image(self, index):
+        self.image_counts[index] += 1
+
+    def report_status(self):
+        if not self.image_counts[0] or not self.image_counts[1]:
+            self.get_logger().warn(f'等待双目图像：cam0={self.image_counts[0]}, cam1={self.image_counts[1]}')
+        elif not self.pair_count:
+            self.get_logger().warn('收到双目图像，但采集时间戳未落在同步窗口内；检查双目时钟/帧率')
+        elif not self.depth_count:
+            self.get_logger().warn('双目已同步，但软件深度尚未产出；检查图像编码、分辨率和节点日志')
+        self.image_counts = [0, 0]
+        self.pair_count = 0
+        self.depth_count = 0
 
     def callback(self,left,right):
+        self.pair_count += 1
         stamp = left.header.stamp.sec+left.header.stamp.nanosec*1e-9
         if stamp<self.last: self.last=-float('inf')
         if stamp-self.last < self.period: return
         self.last=stamp
         a,b = [self.bridge.imgmsg_to_cv2(m,'mono8') for m in (left,right)]
         depth = self.matcher.depth(a,b)
+        self.depth_count += 1
         header = copy.deepcopy(left.header if self.matcher.order[0]=='cam0' else right.header)
         header.frame_id=self.get_namespace().strip('/')+'_stereo_depth_optical'
         out = self.bridge.cv2_to_imgmsg(depth,'32FC1')

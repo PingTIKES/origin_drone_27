@@ -64,10 +64,12 @@ PYTHONNOUSERSITE=1 ros2 launch uav_bringup algorithm.launch.py \
 
 ```bash
 ros2 topic hz /uav1/cam0/image_raw
+ros2 topic hz /uav1/cam1/image_raw
 ros2 topic hz /uav1/imu0
 ros2 topic hz /uav1/odomimu
 ros2 topic echo --once /uav1/vio_health
 ros2 topic hz /px4_1/fmu/out/vehicle_local_position
+ros2 topic hz /uav1/d435i/depth/image_raw
 ros2 topic hz /uav1/obstacles
 ros2 topic hz /uav1/local_map
 ros2 topic hz /tf
@@ -75,6 +77,8 @@ ros2 topic echo --once /uav1/navigation_state
 ```
 
 这些检查命令应分别运行，不要在同一终端等待某个持续 `hz` 命令时继续粘贴后续命令。确认 `vio_health` 持续为 `VALID`、PX4 本地位置有效且已融合视觉、`obstacles`/`local_map`/`tf` 持续更新。RViz Fixed Frame 设为 `uav1_local_nwu`。若显示 `Frame [uav1_local_nwu] does not exist`，先查 PX4 位置和姿态、点云采集时间与 `/clock`，再查 `rolling_mapper` 日志；地图和 TF 由该节点产生。
+
+若 `/tf` 有频率而 `obstacles`、`local_map` 均无频率，先查 `/uav1/d435i/depth/image_raw`。深度也没有频率时，检查双目左右图像及 `software_stereo` 日志；深度有频率但点云没有时，检查 `stereo_depth_node` 日志。双目看到无纹理或极暗场景时可能没有可用视差，节点会拒绝生成虚假的障碍点云。`/uav1/navigation_state=HOLD_MAP_STALE` 表示地图链路不满足导航要求。RViz 的 Fixed Frame 位于左侧 `Displays → Global Options`，而 `TF` 可视化项可以通过 `Add → TF` 增加；Fixed Frame 已设置并不保证地图话题有数据。
 
 确认仿真起飞区无遮挡后请求起飞。服务返回 `Start requested` 只表示请求已接受，实际解锁和起飞仍须观察 `/uav1/state`、PX4 状态和 Gazebo。
 

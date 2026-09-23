@@ -8,6 +8,10 @@ if [[ -s "$MESH" ]]; then
     echo "[field] Mesh already exists: $MESH"
 else
     mkdir -p "$(dirname "$MESH")"
-    curl -fL --retry 3 -o "$MESH" "$URL"
+    PARTIAL="$(mktemp "${MESH}.download.XXXXXX")"
+    trap 'rm -f "$PARTIAL"' EXIT INT TERM
+    curl -fL --retry 3 -o "$PARTIAL" "$URL"
+    mv "$PARTIAL" "$MESH"
+    trap - EXIT INT TERM
     echo "[field] Downloaded: $MESH"
 fi

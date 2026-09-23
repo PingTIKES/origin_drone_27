@@ -78,6 +78,7 @@ class StereoDepthNode(Node):
         self.pub = self.create_publisher(PointCloud2, 'obstacles', 5)
 
         self._count = 0
+        self._last_empty_warning = -float('inf')
         self._grid_cache = {}  # (h, w) -> (v, u) 抽稀后的像素网格
         self.get_logger().info(
             f'深度转点云就绪：订阅 ~d435i/depth/image_raw，发布 ~obstacles '
@@ -116,6 +117,10 @@ class StereoDepthNode(Node):
         z = depth[::s, ::s]
         valid = np.isfinite(z) & (z > self.min_r) & (z < self.max_r)
         if not np.any(valid):
+            now = self.get_clock().now().nanoseconds * 1e-9
+            if now - self._last_empty_warning >= 5:
+                self.get_logger().warn('深度图已到达，但 0.3–8 m 内没有有效像素；检查双目纹理、视差和深度单位')
+                self._last_empty_warning = now
             return
         z = z[valid]
         u = u[valid]

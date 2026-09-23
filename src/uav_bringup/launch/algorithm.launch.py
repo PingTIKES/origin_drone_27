@@ -76,7 +76,8 @@ def setup(context):
         matcher=StereoMatcher(config,t_bi)
         t_bc=matcher.body_optical
         nodes.append(node('uav_perception','software_stereo','software_stereo',
-                          {'config':config,'t_body_imu':t_bi.ravel().tolist()}))
+                          {'config':config,'t_body_imu':t_bi.ravel().tolist(),
+                           'sync_slop':.015 if sim else .003}))
         depth_remaps=[]
     else:
         # Must be the actual depth-reference frame, not the independent RGB frame.
