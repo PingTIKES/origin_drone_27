@@ -299,6 +299,7 @@ class AdapterTests(unittest.TestCase):
     def test_no_path_not_vfh(self):
         n=self.nav();n.map.data=[100]*1600;n.tick()
         self.assertEqual(n.state,'HOLD_BLOCKED_START')
+        self.assertEqual(len(n.yaw_pub.messages),0)
 
     def test_budget_vfh(self):
         n=self.nav();n.p['planning_budget']=-1;n.tick()

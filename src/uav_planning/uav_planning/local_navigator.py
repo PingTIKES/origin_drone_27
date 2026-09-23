@@ -122,9 +122,6 @@ class LocalNavigator(Node):
             path, status = [start,out], 'VFH_FALLBACK'
         elif not path:
             self.hold('HOLD_'+status)
-            # Turn the front camera toward the requested direction while holding position.
-            # Rotating is not permission to enter unknown space.
-            self.yaw_pub.publish(Float32(data=float(math.atan2(goal.y-pose.y,goal.x-pose.x))))
             return
         out = bounded_step(start,path,step)
         if not grid.line_free(start,out):

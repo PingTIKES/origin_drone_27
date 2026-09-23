@@ -32,7 +32,7 @@ Visualization Manager:
     - Class: rviz_default_plugins/Odometry
       Name: Px4EstimatedOdom
       Enabled: true
-      Keep: 200
+      Keep: 1
       Position Tolerance: 0.1
       Angle Tolerance: 0.1
       Shape:
