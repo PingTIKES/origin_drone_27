@@ -11,6 +11,14 @@ TARGET_SYSTEM="${TARGET_SYSTEM:-$UAV_ID}"
 SERIAL_DEV="${SERIAL_DEV:-/dev/ttyS1}"
 SERIAL_BAUD="${SERIAL_BAUD:-921600}"
 CYCLONEDDS_XML="${CYCLONEDDS_XML:-$ROOT_DIR/deploy/cyclonedds.xml}"
+DEPTH_SOURCE="${DEPTH_SOURCE:-software}"
+DEPTH_SCALE="${DEPTH_SCALE:-0.001}"
+CAM0_TOPIC="${CAM0_TOPIC:-/camera/camera/infra1/image_rect_raw}"
+CAM1_TOPIC="${CAM1_TOPIC:-/camera/camera/infra2/image_rect_raw}"
+IMU_TOPIC="${IMU_TOPIC:-/camera/camera/imu}"
+DEPTH_TOPIC="${DEPTH_TOPIC:-/camera/camera/depth/image_rect_raw}"
+DEPTH_INFO_TOPIC="${DEPTH_INFO_TOPIC:-/camera/camera/depth/camera_info}"
+[[ "$DEPTH_SOURCE" == software || "$DEPTH_SOURCE" == hardware ]] || { echo 'DEPTH_SOURCE must be software or hardware' >&2; exit 2; }
 
 [[ -d "$CALIBRATION_DIR" ]] || {
     echo "Measured calibration directory missing: $CALIBRATION_DIR" >&2
@@ -36,7 +44,10 @@ MicroXRCEAgent serial --dev "$SERIAL_DEV" -b "$SERIAL_BAUD" & PIDS+=("$!")
 sleep 3
 ros2 launch uav_bringup algorithm.launch.py \
     sim:=false uav_id:="$UAV_ID" target_system:="$TARGET_SYSTEM" \
-    calibration_dir:="$CALIBRATION_DIR" depth_source:=hardware rviz:=false &
+    calibration_dir:="$CALIBRATION_DIR" depth_source:="$DEPTH_SOURCE" \
+    depth_scale:="$DEPTH_SCALE" cam0_topic:="$CAM0_TOPIC" cam1_topic:="$CAM1_TOPIC" \
+    imu_topic:="$IMU_TOPIC" depth_topic:="$DEPTH_TOPIC" \
+    depth_info_topic:="$DEPTH_INFO_TOPIC" rviz:=false &
 PIDS+=("$!")
 
 echo "[onboard] uav$UAV_ID algorithm started. It will not arm automatically."
