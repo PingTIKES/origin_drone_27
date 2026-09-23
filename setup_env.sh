@@ -19,7 +19,10 @@ if [[ ! -f /opt/ros/humble/setup.bash ]]; then
     echo 'Install ROS 2 Humble before running setup_env.sh.' >&2
     exit 1
 fi
+# ROS/colcon setup scripts read optional variables without nounset guards.
+set +u
 source /opt/ros/humble/setup.bash
+set -u
 
 sudo apt update
 sudo apt install -y python3-colcon-common-extensions python3-rosdep python3-numpy \
@@ -89,7 +92,9 @@ fi
 
 rosdep install --from-paths "$ROOT_DIR/src" --ignore-src -r -y
 (cd "$OV_WS" && colcon build --packages-select ov_core ov_init ov_msckf ov_eval)
+set +u
 source "$OV_WS/install/setup.bash"
+set -u
 (cd "$ROOT_DIR" && colcon build --symlink-install)
 
 echo "Ready: PX4 1.14.3 algorithm workspace ($MODE)."

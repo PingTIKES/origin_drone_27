@@ -29,9 +29,11 @@ DEPTH_INFO_TOPIC="${DEPTH_INFO_TOPIC:-/camera/camera/depth/camera_info}"
 [[ -f "$ROOT_DIR/install/setup.bash" ]] || { echo 'Build this workspace first.' >&2; exit 1; }
 [[ -e "$SERIAL_DEV" ]] || { echo "Serial device missing: $SERIAL_DEV" >&2; exit 1; }
 
+set +u
 source /opt/ros/humble/setup.bash
 source "$OV_WS/install/setup.bash"
 source "$ROOT_DIR/install/setup.bash"
+set -u
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-42}"
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI="file://$CYCLONEDDS_XML"
