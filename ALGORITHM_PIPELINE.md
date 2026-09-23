@@ -22,7 +22,7 @@ D430i + 独立 RGB，使用相机内置 IMU。仿真和真机统一使用 PX4 1.
   swarm_agent → safety_waypoint（通信避碰请求，也必须通过障碍检查）
 ```
 
-`algorithm.launch.py` 不读取 Gazebo 真值、理想深度、GPS 定位或预制场地地图。PX4 使用惯性融合控制，这是估计器的一部分。
+`algorithm.launch.py` 的定位、避障、规划和控制不读取 Gazebo 真值、理想深度、GPS 定位或预制场地地图。仿真另发布 STL 生成的全场先验图到 `/uavN/global_map`，仅供 RViz 观察。PX4 使用惯性融合控制，这是估计器的一部分。
 独立 RGB 暂不参与定位和避障；`yolo_detector.py` 仅保留后续实现接口，未提供训练模型时不产生检测结果。四机任务只通过带有效期的 `SwarmCommand` 进入每机局部导航。
 
 ## 局部地图和规划行为

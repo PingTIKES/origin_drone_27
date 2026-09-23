@@ -25,7 +25,7 @@ source /opt/ros/humble/setup.bash
 set -u
 
 sudo apt update
-sudo apt install -y python3-colcon-common-extensions python3-rosdep python3-numpy \
+sudo apt install -y python3-colcon-common-extensions python3-rosdep python3-numpy python3-pil \
     python3-yaml python3-opencv python3-pip git curl build-essential cmake \
     ros-humble-cv-bridge ros-humble-rmw-cyclonedds-cpp
 

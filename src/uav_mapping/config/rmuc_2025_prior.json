@@ -1,0 +1,17 @@
+{
+  "source": "rmuc_2025.stl",
+  "source_sha256": "cb73b46fe01de83308f05430e895d6d963215a78fbfc5b7e320218f064514556",
+  "layer_m": [
+    1.5,
+    2.5
+  ],
+  "frame": "world_nwu",
+  "resolution": 0.1,
+  "origin": [
+    -16.0,
+    -10.0
+  ],
+  "width": 320,
+  "height": 200,
+  "data_zlib_base64": "eNrt3cuNwzAMQEEXy/5bcM5xYMMI/SGleRUYA0QUddhdV0mSJEmSJEmSbi50In78yvotOowfvwetNvHjx48fP35/c/Lj9yYgv5wgP/sHP378+PEzf7tdAPnZP/i1fH8J8yPlZ/7y48fP/sGPHz9+/Pjx48ePHz9+/Pg9ut/zS76PVPPbvtjwy/gFP378Gvl9fVz982/hN+b9jx8/fm39nH/D7x8d/ADy4+f8m+/+In78+PETP378+IkfP378+PHjx+/sR1f5Mn78+PF7HpCf+St+/Pjx48ePHz9+/Or5ReVNsolf8OPHj5/5y4+f+PHjx48fP378+PHjx48fP3789rz8/4+r+Pjx4+f8m8/P/E35ub/w4+f8u+fz+F3163D/48eP3yz7R7+/cWn+DuXX8T7Ijx8/fvz48ePHjx8/fvyG8IufqPHjx28Kv+CX8QPG72U/SCk/RvYPfvz4iZ/52+/+TMn+wa/r/PD+wo8fP3787B/8Gt7/dBQ/fjX9JEmSJEmSJEm6qA/c5e7P"
+}

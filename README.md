@@ -8,7 +8,7 @@ RoboMaster 2027 无人机视觉定位、深度建图、局部规划与四机协�
 手动目标或四机任务 → 局部规划 → Offboard 航点 → PX4
 ```
 
-Gazebo 仅提供传感器和动力学；算法不读取真值位姿、理想深度或预制占据地图。独立 RGB 的目标检测尚未完成，`yolo_detector.py` 仅保留后续接口，不参与当前定位和避障。
+Gazebo 提供传感器和动力学；定位、避障与控制不读取真值位姿或理想深度。仿真另外提供由场地 STL 预先生成的全局参考图，仅供 RViz 对照，当前规划器不使用它。独立 RGB 的目标检测尚未完成，`yolo_detector.py` 仅保留后续接口，不参与当前定位和避障。
 
 ## 功能包、输入和输出
 
@@ -19,7 +19,7 @@ Gazebo 仅提供传感器和动力学；算法不读取真值位姿、理想深�
 | `uav_bringup` | 按仿真或真机参数启动算法图、传感器桥和可选 RViz | `sim`、`uav_id`、标定目录、深度来源、驱动话题 | 下列节点与话题 |
 | `uav_localization` + OpenVINS | 双目惯性里程计；转换坐标与时间戳并向 PX4 提交视觉里程计 | `/uavN/cam0/image_raw`、`cam1/image_raw`、`imu0`、实测标定 | `/uavN/odomimu`、`vio_health`、`/px4_N/fmu/in/vehicle_visual_odometry` |
 | `uav_perception` | 真机驱动话题中继、双目软件深度或硬件深度转机体系点云 | 左右目、IMU、可选深度图和 CameraInfo | `/uavN/d435i/depth/image_raw`（软件深度）、`/uavN/obstacles` |
-| `uav_mapping` | 点云生成滚动局部栅格；仿真累积已观测的全局栅格，并发布估计里程计和机体 TF | `/uavN/obstacles`、PX4 本地位置和姿态、`local_map` | `/uavN/local_map`、仿真 `/uavN/global_map`、`/uavN/odom`、`/tf` 中 `uavN_local_nwu → uavN` |
+| `uav_mapping` | 点云生成滚动局部栅格；仿真发布预制场地参考图，并发布估计里程计和机体 TF | `/uavN/obstacles`、PX4 本地位置和姿态、打包的场地先验图 | `/uavN/local_map`、仿真 `/uavN/global_map`、`/uavN/odom`、`/tf` 中 `uavN_local_nwu → uavN` |
 | `uav_planning` | 手动目标转航点；基于新鲜局部地图规划或保持 | `/uavN/goal_pose` 或 `waypoint_in`、`local_map`、PX4 位置 | `/uavN/waypoint`、`navigation_state`、`local_path`、`desired_yaw` |
 | `uav_control` | 收到请求后管理 Offboard、解锁、起飞、航点和降落 | `waypoint`、`vio_health`、PX4 状态、`/uavN/start_mission`、`command` | `/uavN/state`、PX4 `offboard_control_mode`、`trajectory_setpoint`、`vehicle_command` |
 | `uav_swarm`、`uav_msgs` | 四机任务分配、状态和避碰消息；提供接口类型 | `/swarm/command`、`/swarm/uav_state` 等 | 各机 `waypoint_in`、`safety_waypoint` 及 `/swarm/state` |
@@ -86,9 +86,9 @@ ros2 topic echo --once /uav1/navigation_state
 
 ### 在 RViz 对照地图、轨迹与坐标系
 
-仿真启动的 `global_mapper` 将 `/uav1/local_map` 中**已观察到的**空闲格和障碍格累积为 `/uav1/global_map`，固定在 `uav1_local_nwu`。默认覆盖以 VIO 起点为中心的 60×60 m、0.1 m 栅格；未看到的区域保持未知。每次 PX4 位置重置或飞行高度层改变时清空。它只供 RViz 观察，局部规划仍使用新鲜的 `/uav1/local_map`；全局图不会把 Gazebo 网格当成真值地图，也不会给规划器补全未观测区域。因此需要转向和移动传感器，才能逐渐显示整片场地。
+仿真启动的 `prior_mapper` 立即发布 `/uav1/global_map`，无需等待相机看到场地。它由当前 RMUC2025 STL 的 1.5–2.5 m 高度层预先生成，0.1 m 栅格覆盖整片场地；场地内空白为该高度层的参考空闲区域，外部为未知。各机按仿真出生点转换到自己的 `uavN_local_nwu` 坐标系。先验图是**仿真可视化参考**，并不保证飞行安全：STL 变更、实际高度不同、动态障碍、出生点设置变化或定位漂移都会造成偏差。局部规划仍只使用实时 `/uav1/local_map`。场地 STL 更新后，先运行 `RM27_FIELD_MESH=/path/to/rmuc_2025.stl PYTHONNOUSERSITE=1 python3 tools/generate_field_prior.py` 重新生成打包地图，再重建 `uav_mapping`。
 
-RViz 默认打开 `AccumulatedGlobalMap`、`Px4EstimatedOdom`、`TF` 和 `LocalPath`；可勾选 `ObservedLocalMap` 查看导航当前使用的局部窗口。Fixed Frame 为 `uav1_local_nwu`，TF 树应出现 `uav1_local_nwu → uav1`。`/uav1/odom` 是 PX4 的估计里程计，以同一 NWU 坐标系显示，**不是**独立真值；若 VIO 发散，全局图和里程计也会随之失真。检查 TF 可单独运行：
+RViz 默认打开 `PriorFieldMap`、`Px4EstimatedOdom`、`TF` 和 `LocalPath`；可勾选 `ObservedLocalMap` 查看导航当前使用的局部窗口。Fixed Frame 为 `uav1_local_nwu`，TF 树应出现 `uav1_local_nwu → uav1`。`/uav1/odom` 是 PX4 的估计里程计，**不是**独立真值；若 VIO 发散，里程计相对先验图也会偏移。检查 TF 可单独运行：
 
 ```bash
 ros2 run tf2_ros tf2_echo uav1_local_nwu uav1

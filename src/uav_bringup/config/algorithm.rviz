@@ -12,12 +12,12 @@ Visualization Manager:
       Enabled: true
       Cell Size: 1
     - Class: rviz_default_plugins/Map
-      Name: AccumulatedGlobalMap
+      Name: PriorFieldMap
       Enabled: true
       Alpha: 0.75
       Topic:
         Value: /uav1/global_map
-        Durability Policy: Volatile
+        Durability Policy: Transient Local
         Reliability Policy: Reliable
         Depth: 1
     - Class: rviz_default_plugins/Map
