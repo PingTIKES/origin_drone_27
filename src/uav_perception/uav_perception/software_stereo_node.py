@@ -20,8 +20,8 @@ class SoftwareStereo(Node):
         cv2.setNumThreads(2)
         self.period,self.last = 1/p('rate'),-float('inf')
         self.bridge = CvBridge()
-        self.pub = self.create_publisher(Image,'d435i/depth/image_raw',1)
-        self.info = self.create_publisher(CameraInfo,'d435i/depth/camera_info',1)
+        self.pub = self.create_publisher(Image,'d435i/depth/image_raw',qos_profile_sensor_data)
+        self.info = self.create_publisher(CameraInfo,'d435i/depth/camera_info',qos_profile_sensor_data)
         self.subs = [message_filters.Subscriber(self,Image,f'cam{i}/image_raw',qos_profile=qos_profile_sensor_data) for i in range(2)]
         self.image_counts = [0, 0]
         self.pair_count = 0

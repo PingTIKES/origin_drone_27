@@ -78,12 +78,23 @@ class StereoDepthNode(Node):
         self.pub = self.create_publisher(PointCloud2, 'obstacles', 5)
 
         self._count = 0
+        self._depth_count_window = 0
+        self._cloud_count_window = 0
         self._last_empty_warning = -float('inf')
         self._grid_cache = {}  # (h, w) -> (v, u) 抽稀后的像素网格
+        self.create_timer(5., self._report_status)
         self.get_logger().info(
             f'深度转点云就绪：订阅 ~d435i/depth/image_raw，发布 ~obstacles '
             f'(frame={self.frame_id}，step={self.step}，'
             f'每 {self.decim} 帧处理 1 帧)')
+
+    def _report_status(self):
+        if not self._depth_count_window:
+            self.get_logger().warn('5 秒内未收到深度图；检查深度话题及发布/订阅 QoS')
+        elif not self._cloud_count_window:
+            self.get_logger().warn(f'5 秒内收到 {self._depth_count_window} 帧深度图，但没有发布点云；检查深度解码、有效量程和节点日志')
+        self._depth_count_window = 0
+        self._cloud_count_window = 0
 
     def _cb_info(self, msg):
         # This node consumes rectified depth, hence P, not distorted-image K.
@@ -94,6 +105,7 @@ class StereoDepthNode(Node):
 
     def _cb_depth(self, msg: Image):
         self._count += 1
+        self._depth_count_window += 1
         if self._count % self.decim != 0:
             return
         h, w, s = msg.height, msg.width, self.step
@@ -137,6 +149,7 @@ class StereoDepthNode(Node):
         hdr.frame_id = self.frame_id
         out = point_cloud2.create_cloud_xyz32(hdr, cloud)
         self.pub.publish(out)
+        self._cloud_count_window += 1
 
 
 def main(args=None):

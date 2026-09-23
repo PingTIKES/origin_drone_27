@@ -80,6 +80,8 @@ ros2 topic echo --once /uav1/navigation_state
 
 若 `/tf` 有频率而 `obstacles`、`local_map` 均无频率，先查 `/uav1/d435i/depth/image_raw`。深度也没有频率时，检查双目左右图像及 `software_stereo` 日志；深度有频率但点云没有时，检查 `stereo_depth_node` 日志。双目看到无纹理或极暗场景时可能没有可用视差，节点会拒绝生成虚假的障碍点云。`/uav1/navigation_state=HOLD_MAP_STALE` 表示地图链路不满足导航要求。RViz 的 Fixed Frame 位于左侧 `Displays → Global Options`，而 `TF` 可视化项可以通过 `Add → TF` 增加；Fixed Frame 已设置并不保证地图话题有数据。
 
+`stereo_depth_node` 每 5 秒对没有深度输入或有深度输入却无点云的情况给出警告。查看其日志可用 `ls -t ~/.ros/log/python3_*.log | head` 找到当前进程文件，并结合 `ros2 node info /uav1/stereo_depth_node` 核对订阅名。更新代码后必须重建 `uav_perception` 并重启算法 launch；仅在旧进程运行时修改源码不会改变该进程的行为。
+
 确认仿真起飞区无遮挡后请求起飞。服务返回 `Start requested` 只表示请求已接受，实际解锁和起飞仍须观察 `/uav1/state`、PX4 状态和 Gazebo。
 
 ```bash
