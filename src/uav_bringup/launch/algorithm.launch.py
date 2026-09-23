@@ -12,6 +12,7 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from uav_localization.calibration import read_yaml, transform, validate_config, write_opencv_yaml
+from uav_localization.vio_geometry import quaternion
 from uav_perception.stereo_matcher import StereoMatcher
 
 
@@ -94,6 +95,20 @@ def setup(context):
                   'frame_decimation':1 if mode=='software' else 3},depth_remaps))
     nodes.append(node('uav_mapping','rolling_mapper','rolling_mapper',
                       {'uav_id':uid,'px4_ns':f'px4_{uid}','cam_xyz':t_bc[:3,3].tolist()}))
+    mount=t_bi[:3,3] if sim else t_bc[:3,3]
+    nodes.append(Node(package='tf2_ros',executable='static_transform_publisher',
+                      name=f'{ns}_camera_mount_tf',arguments=[
+                          '--x',str(float(mount[0])),'--y',str(float(mount[1])),
+                          '--z',str(float(mount[2])),'--frame-id',ns,
+                          '--child-frame-id',f'{ns}_camera_mount']))
+    camera_q=quaternion(t_bc[:3,:3])
+    nodes.append(Node(package='tf2_ros',executable='static_transform_publisher',
+                      name=f'{ns}_camera_optical_tf',arguments=[
+                          '--x',str(float(t_bc[0,3])),'--y',str(float(t_bc[1,3])),
+                          '--z',str(float(t_bc[2,3])),
+                          '--qx',str(float(camera_q[1])),'--qy',str(float(camera_q[2])),
+                          '--qz',str(float(camera_q[3])),'--qw',str(float(camera_q[0])),
+                          '--frame-id',ns,'--child-frame-id',f'{ns}_camera_optical']))
     if sim:
         nodes.append(node('uav_mapping','prior_mapper','prior_mapper',{'uav_id':uid}))
     nodes.append(node('uav_planning','local_navigator','local_navigator',

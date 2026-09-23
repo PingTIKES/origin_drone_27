@@ -2,7 +2,7 @@
 """Rasterize the pinned RMUC STL into a 2 m flight-layer reference map.
 
 This is a simulation reference for RViz, not an input to navigation/control.
-Coordinates are world NWU after the +90 degree SDF model rotation.
+Coordinates are Gazebo world ENU after the +90 degree SDF model rotation.
 """
 import base64
 import hashlib
@@ -19,8 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MESH = Path(os.environ.get('RM27_FIELD_MESH', ROOT / 'worlds/models/rmuc_2025/meshes/rmuc_2025.stl'))
 OUT = ROOT / 'src/uav_mapping/config/rmuc_2025_prior.json'
 RES = .1
-ORIGIN = (-16., -10.)
-WIDTH, HEIGHT = 320, 200
+ORIGIN = (-10., -16.)
+WIDTH, HEIGHT = 200, 320
 Z_MIN, Z_MAX = 1.5, 2.5
 
 
@@ -46,7 +46,7 @@ def main():
     if len(triangles) != count:
         raise ValueError('truncated STL')
     # The SDF link raises the mesh by 0.2 m. The model rotates it +90 degrees:
-    # mesh x -> world north, mesh y -> world west in the NWU display frame.
+    # mesh x -> world ENU north, mesh y -> world ENU west.
     triangles = triangles.astype(np.float64)
     triangles[:, :, 2] += .2
     layer = Image.new('L', (WIDTH, HEIGHT), 0)
@@ -58,7 +58,7 @@ def main():
         if len(poly) < 2: continue
         poly = clip_z(poly, Z_MAX, False)
         if len(poly) < 2: continue
-        xy = [((v[0] - ORIGIN[0]) / RES, (-v[1] - ORIGIN[1]) / RES) for v in poly]
+        xy = [((-v[1] - ORIGIN[0]) / RES, (v[0] - ORIGIN[1]) / RES) for v in poly]
         if len(xy) >= 3: draw.polygon(xy, fill=255)
         else: draw.line(xy, fill=255, width=1)
     # Slightly thicken sub-cell mesh walls for a legible reference image.
@@ -67,12 +67,12 @@ def main():
     grid = np.full((HEIGHT, WIDTH), -1, np.int8)
     xs = ORIGIN[0] + (np.arange(WIDTH) + .5) * RES
     ys = ORIGIN[1] + (np.arange(HEIGHT) + .5) * RES
-    interior = ((abs(xs)[None, :] <= 14.58) & (abs(ys)[:, None] <= 8.07))
+    interior = ((abs(xs)[None, :] <= 8.07) & (abs(ys)[:, None] <= 14.58))
     grid[interior] = 0
     grid[occupied] = 100
     payload = dict(source='rmuc_2025.stl', source_sha256=hashlib.sha256(MESH.read_bytes()).hexdigest(),
                    layer_m=[Z_MIN, Z_MAX],
-                   frame='world_nwu', resolution=RES, origin=list(ORIGIN),
+                   frame='world_enu', resolution=RES, origin=list(ORIGIN),
                    width=WIDTH, height=HEIGHT,
                    data_zlib_base64=base64.b64encode(zlib.compress(grid.tobytes(), 9)).decode('ascii'))
     OUT.parent.mkdir(parents=True, exist_ok=True)

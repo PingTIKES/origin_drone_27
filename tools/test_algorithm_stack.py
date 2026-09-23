@@ -159,6 +159,17 @@ class GeometryTests(unittest.TestCase):
         expected=m.p[0,0]*m.baseline/8.
         self.assertAlmostEqual(float(np.nanmedian(depth[:,150:-20])),expected,delta=.1)
 
+    def test_sim_camera_points_along_body_front(self):
+        model=ET.parse(ROOT/'worlds/models/d435i/model.sdf')
+        for sensor in model.findall('.//sensor'):
+            if sensor.get('type') in ('camera','depth_camera'):
+                rpy=[float(x) for x in sensor.findtext('pose').split()[3:]]
+                np.testing.assert_allclose(rpy,[0,0,0])
+        _,cams,_=validate_config(ROOT/'src/uav_localization/config/openvins_sim/estimator_config.yaml')
+        for cam in cams.values():
+            rotation=np.array(cam['T_imu_cam'])[:3,:3]
+            np.testing.assert_allclose(rotation@[0,0,1],[1,0,0])
+
     def test_opencv_yaml_roundtrip(self):
         import cv2
         with tempfile.TemporaryDirectory() as directory:
