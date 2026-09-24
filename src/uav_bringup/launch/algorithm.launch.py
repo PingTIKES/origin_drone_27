@@ -6,6 +6,7 @@ MicoAir PX4 1.14.3 SITL requires tools/prepare_algorithm_sim.py first (clock + p
 from pathlib import Path
 import tempfile
 import numpy as np
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
@@ -14,6 +15,19 @@ from launch_ros.actions import Node
 from uav_localization.calibration import read_yaml, transform, validate_config, write_opencv_yaml
 from uav_localization.vio_geometry import quaternion
 from uav_perception.stereo_matcher import StereoMatcher
+
+
+def package_params(package, node_name):
+    """Load one node's ROS parameters; null preserves its launch-derived value."""
+    path = Path(get_package_share_directory(package)) / 'config/params.yaml'
+    with path.open(encoding='utf-8') as stream:
+        document = yaml.safe_load(stream)
+    if not isinstance(document, dict) or node_name not in document:
+        raise ValueError(f'{path}: missing {node_name} parameter section')
+    section = document[node_name]
+    if not isinstance(section, dict) or not isinstance(section.get('ros__parameters'), dict):
+        raise ValueError(f'{path}: {node_name}.ros__parameters must be a mapping')
+    return {key: value for key, value in section['ros__parameters'].items() if value is not None}
 
 
 def setup(context):
@@ -53,9 +67,13 @@ def setup(context):
     config=str(work/'estimator_config.yaml')
     nodes=[]
     common={'use_sim_time':sim}
-    def node(package,exe,name,params=None,remaps=None):
+    def node(package,exe,name,params=None,remaps=None,param_package=None):
+        source = param_package or (package if package.startswith('uav_') else None)
+        resolved = dict(params or {})
+        if source:
+            resolved.update(package_params(source, name))
         return Node(package=package,executable=exe,name=name,namespace=ns,output='screen',
-                    parameters=[common,params or {}],remappings=remaps or [])
+                    parameters=[common,resolved],remappings=remaps or [])
     if sim:
         # One /clock publisher even with several UAV stacks: enable only for the first.
         bridge=[f'/{ns}/vio_cam{i}/image@sensor_msgs/msg/Image[gz.msgs.Image' for i in range(2)]
@@ -70,7 +88,8 @@ def setup(context):
         nodes.append(node('uav_perception','sensor_relay','sensor_relay',
                      {'cam0':arg('cam0_topic'),'cam1':arg('cam1_topic'),'imu':arg('imu_topic')}))
     nodes.append(node('ov_msckf','run_subscribe_msckf','openvins',
-                      {'config_path':config,'publish_global_to_imu_tf':False,'publish_calibration_tf':False}))
+                      {'config_path':config,'publish_global_to_imu_tf':False,'publish_calibration_tf':False},
+                      param_package='uav_localization'))
     nodes.append(node('uav_localization','vio_to_px4.py','vio_to_px4',
                       {'px4_ns':f'px4_{uid}','t_body_imu':t_bi.ravel().tolist()}))
     if mode=='software':

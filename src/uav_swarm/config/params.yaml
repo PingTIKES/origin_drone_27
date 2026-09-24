@@ -1,0 +1,32 @@
+# null: keep launch-time vehicle identity, spawn pose and altitude layers.
+swarm_agent:
+  ros__parameters:
+    uav_id: null
+    px4_ns: null
+    offset_x: null
+    offset_y: null
+    yaw_offset: null
+    state_rate: 10.0
+    intent_rate: 5.0
+    avoidance_rate: 10.0
+    state_timeout: 0.45
+    command_timeout: 1.0
+    max_speed: 0.6
+    time_horizon: 2.0
+    safe_radius: 0.65
+    delay_margin: 0.25
+    lookahead: 0.7
+    intent_steps: 8
+    intent_dt: 0.25
+    position_variance: 0.01
+swarm_coordinator:
+  ros__parameters:
+    num_uavs: 4
+    spawn_spacing: 2.0
+    spawn_offsets: null
+    search_area: [-10.0, -6.0, 8.0, 6.0]
+    lawnmower_step: 2.0
+    base_alt: null
+    alt_layer: null
+    converge_time: 15.0
+    wp_timeout: 30.0

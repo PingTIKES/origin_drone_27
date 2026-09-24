@@ -1,0 +1,22 @@
+# null: keep the launch-time vehicle identity or mission altitude.
+local_navigator:
+  ros__parameters:
+    uav_id: null
+    px4_ns: null
+    map_timeout: 0.6
+    pose_timeout: 0.3
+    goal_timeout: 1.0
+    step_distance: 0.4
+    planning_budget: 0.025
+    max_speed: 0.6
+    braking_accel: 0.8
+    reaction_time: 0.3
+    height_tolerance: 0.12
+    safety_priority_time: null
+    align_enter_deg: 30.0
+    align_exit_deg: 15.0
+    align_speed: 0.15
+local_goal:
+  ros__parameters:
+    uav_id: null
+    cruise_alt: null

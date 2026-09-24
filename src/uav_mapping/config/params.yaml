@@ -1,0 +1,17 @@
+# null: keep launch-time values derived from the vehicle and measured camera mount.
+rolling_mapper:
+  ros__parameters:
+    uav_id: null
+    px4_ns: null
+    cam_xyz: null
+    size: 12.0
+    resolution: 0.1
+    memory: 8.0
+    inflation: 0.35
+    half_height: 0.25
+    pose_slop: 0.15
+    max_rays: 1800
+    max_cloud_age: 0.4
+prior_mapper:
+  ros__parameters:
+    uav_id: null

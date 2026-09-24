@@ -26,6 +26,28 @@ Gazebo 提供传感器和动力学；定位、避障与控制不读取真值位�
 
 `vio_health=VALID` 只说明 VIO 桥接受了新鲜数据，还须确认 PX4 EKF2 **实际融合**了视觉数据。`/uavN/obstacles` 或 `/tf` 没有频率时，应检查各自上游输入和时间戳；仅在 `ros2 topic list` 中看到名称不代表消息在发布。
 
+## 算法参数文件
+
+每个有可配置 ROS 节点的功能包都有一个 `config/params.yaml`。启动 `algorithm.launch.py`（或四机 `algorithm_swarm_sim.launch.py`）时，会按**节点名**读取该包的文件；同一包中不同节点各有一个 `ros__parameters` 段。文件中的具体值优先于启动文件的默认值，修改后**重启算法 launch**即可生效，不需要改 Python 源码。第一次新增这些文件后需按安装流程构建一次；使用 `colcon build --symlink-install` 时，源目录里的参数文件与安装目录相连。若使用普通安装，修改后重新构建相应包。
+
+| 功能包 | 文件 | 节点与主要可调项 |
+|---|---|---|
+| `uav_localization` | `src/uav_localization/config/params.yaml` | `openvins` 的 TF 发布开关，`vio_to_px4` 的数据新鲜度、方差和跳变阈值，`compare_vio_gt` 的诊断周期 |
+| `uav_perception` | `src/uav_perception/config/params.yaml` | `software_stereo` 的处理率、纹理阈值和同步容差；`stereo_depth_node` 的抽样、量程与机体掩膜；相机中继与预留的 `yolo_detector` |
+| `uav_mapping` | `src/uav_mapping/config/params.yaml` | `rolling_mapper` 的地图大小、分辨率、记忆时间、膨胀半径、高度带及点云限制；`prior_mapper` 的机号 |
+| `uav_planning` | `src/uav_planning/config/params.yaml` | `local_navigator` 的超时、速度、规划步长、制动与转向阈值；`local_goal` 的巡航高度 |
+| `uav_control` | `src/uav_control/config/params.yaml` | `offboard_control` 的起飞、航点、朝向与数据超时限制 |
+| `uav_swarm` | `src/uav_swarm/config/params.yaml` | `swarm_agent` 的状态、避碰和轨迹参数；`swarm_coordinator` 的搜索区与任务周期 |
+
+`null` 表示沿用启动时计算的值，例如 `uav_id`、`px4_ns`、实际标定外参、传感器话题、`target_system`、仿真/真机深度模式。需要明确覆盖时，把 `null` 改成正确类型的数值、布尔值、字符串或数组。**四机共用同一份文件**，因此不要把 `uav_id`、`px4_ns` 等改成单机固定值，否则各机话题会串接。真机外参应优先修正实测标定目录，不能用参数覆盖来掩盖错误标定。`uav_bringup` 是启动包，没有自身声明的 ROS 节点参数；其 `sim`、`uav_id`、`calibration_dir` 等仍由 launch 参数控制。`uav_msgs` 只定义接口，没有节点参数。OpenVINS 的滤波器参数仍在对应的 `estimator_config.yaml`，不会被本表替代。
+
+例如降低局部规划速度，改 `src/uav_planning/config/params.yaml` 中 `local_navigator.ros__parameters.max_speed`，保存并重启算法 launch。查看实际值可运行：
+
+```bash
+ros2 param get /uav1/local_navigator max_speed
+ros2 param get /uav1/rolling_mapper inflation
+```
+
 ## 一、单机仿真流程
 
 ### 安装与启动
@@ -86,7 +108,7 @@ ros2 topic echo --once /uav1/navigation_state
 
 仿真 x500 的 `/uavN/obstacles` 在深度反投影到机体 FLU 后，会滤掉落入已知机体碰撞盒和四个桨盘扫掠范围的点。`stereo_depth_node` 日志每 5 秒报告过滤点数；若始终为 0，原地打转就不能归因于点云中的机体点，应继续检查双目深度伪点、`local_map` 的占用格、起点膨胀、VIO 与导航状态。该掩膜仅针对仿真 x500；真机默认关闭，须测量完整机架、相机安装位姿和桨盘尺寸后才能配置对应模型。掩膜只删除位于机体物理空间内的点，不会清除相机前方的整片区域。
 
-双目软件深度会拒绝水平 7 像素窗口灰度标准差低于 1 的点。无纹理区域的水平视差不可可靠测量；仿真曾在静止时把同一条深灰色图像带交替估成 0.36–0.94 m 的障碍，导致 `RawLocalHits` 产生横排假击中。参数 `texture_std_min` 可按实际相机噪声调整；拒绝的像素不会生成障碍点。调整后须重建 `uav_perception` 并重启算法 launch，观察 `ObstaclePoints`、`RawLocalHits` 和 `ObservedLocalMap`，确认真实边缘仍有深度且近距假带消失。
+双目软件深度会拒绝水平 7 像素窗口灰度标准差低于 1 的点。无纹理区域的水平视差不可可靠测量；仿真曾在静止时把同一条深灰色图像带交替估成 0.36–0.94 m 的障碍，导致 `RawLocalHits` 产生横排假击中。参数 `texture_std_min` 可在 `uav_perception/config/params.yaml` 中按实际相机噪声调整；拒绝的像素不会生成障碍点。调整后重启算法 launch，观察 `ObstaclePoints`、`RawLocalHits` 和 `ObservedLocalMap`，确认真实边缘仍有深度且近距假带消失。
 
 ### 在 RViz 对照地图、轨迹与坐标系
 

@@ -1,0 +1,15 @@
+# null: keep the value computed by algorithm.launch.py (per vehicle / mission).
+offboard_control:
+  ros__parameters:
+    px4_ns: null
+    px4_instance: null
+    target_system: null
+    takeoff_alt: null
+    auto_takeoff: null
+    require_vio: null
+    takeoff_reach_time: 1.0
+    reach_tol: 0.25
+    waypoint_timeout: 1.0
+    forward_heading_limit_deg: 35.0
+    max_yaw_rate_deg_s: 45.0
+    pose_timeout: 0.5

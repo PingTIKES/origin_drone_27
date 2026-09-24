@@ -1,0 +1,23 @@
+# null: keep launch-time values derived from the vehicle and camera/IMU calibration.
+openvins:
+  ros__parameters:
+    config_path: null
+    publish_global_to_imu_tf: false
+    publish_calibration_tf: false
+vio_to_px4:
+  ros__parameters:
+    px4_ns: null
+    t_body_imu: null
+    max_age: 0.25
+    max_position_variance: 1.0
+    max_orientation_variance: 0.25
+    max_velocity_variance: 1.0
+    max_speed: 4.0
+    max_jump: 0.4
+    expected_world: global
+    expected_imu: imu
+compare_vio_gt:
+  ros__parameters:
+    uav_id: null
+    report_period: 5.0
+    match_tol: 0.1

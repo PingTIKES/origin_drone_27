@@ -1,5 +1,6 @@
 """Four-vehicle hybrid swarm stack on top of the sensor-only Gazebo environment."""
 from pathlib import Path
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
@@ -23,9 +24,16 @@ def generate_launch_description():
                 'altitude':str(2.0+.5*(uid-1)),
                 'rviz':LaunchConfiguration('rviz') if uid==1 else 'false'
             }.items()))
+    params={'use_sim_time':True,'num_uavs':4,
+            'spawn_offsets':[v for pair in offsets for v in pair],
+            'base_alt':2.0,'alt_layer':.5}
+    config=Path(get_package_share_directory('uav_swarm'))/'config/params.yaml'
+    with config.open(encoding='utf-8') as stream:
+        document=yaml.safe_load(stream)
+    section=document.get('swarm_coordinator', {}).get('ros__parameters') if isinstance(document, dict) else None
+    if not isinstance(section, dict):
+        raise ValueError(f'{config}: missing swarm_coordinator.ros__parameters')
+    params.update({key:value for key,value in section.items() if value is not None})
     actions.append(Node(package='uav_swarm',executable='swarm_coordinator',
-                        name='swarm_coordinator',output='screen',parameters=[{
-                            'use_sim_time':True,'num_uavs':4,
-                            'spawn_offsets':[v for pair in offsets for v in pair],
-                            'base_alt':2.0,'alt_layer':.5}]))
+                        name='swarm_coordinator',output='screen',parameters=[params]))
     return LaunchDescription(actions)
