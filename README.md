@@ -84,15 +84,15 @@ ros2 topic echo --once /uav1/navigation_state
 
 `stereo_depth_node` 每 5 秒对没有深度输入或有深度输入却无点云的情况给出警告。查看其日志可用 `ls -t ~/.ros/log/python3_*.log | head` 找到当前进程文件，并结合 `ros2 node info /uav1/stereo_depth_node` 核对订阅名。更新代码后必须重建 `uav_perception` 并重启算法 launch；仅在旧进程运行时修改源码不会改变该进程的行为。
 
-仿真 x500 的 `/uavN/obstacles` 在深度反投影到机体 FLU 后，会滤掉落入已知机体碰撞盒和四个桨盘扫掠范围的点。`stereo_depth_node` 日志每 5 秒报告过滤点数；若始终为 0，原地打转就不能归因于点云中的机体点，应继续检查双目深度伪点、`local_map` 的已知/未知区域、起点膨胀、VIO 与导航状态。该掩膜仅针对仿真 x500；真机默认关闭，须测量完整机架、相机安装位姿和桨盘尺寸后才能配置对应模型。掩膜只删除位于机体物理空间内的点，不会清除相机前方的整片区域。
+仿真 x500 的 `/uavN/obstacles` 在深度反投影到机体 FLU 后，会滤掉落入已知机体碰撞盒和四个桨盘扫掠范围的点。`stereo_depth_node` 日志每 5 秒报告过滤点数；若始终为 0，原地打转就不能归因于点云中的机体点，应继续检查双目深度伪点、`local_map` 的占用格、起点膨胀、VIO 与导航状态。该掩膜仅针对仿真 x500；真机默认关闭，须测量完整机架、相机安装位姿和桨盘尺寸后才能配置对应模型。掩膜只删除位于机体物理空间内的点，不会清除相机前方的整片区域。
 
-双目软件深度会拒绝水平 7 像素窗口灰度标准差低于 1 的点。无纹理区域的水平视差不可可靠测量；仿真曾在静止时把同一条深灰色图像带交替估成 0.36–0.94 m 的障碍，导致 `RawLocalHits` 产生横排假击中。参数 `texture_std_min` 可按实际相机噪声调整；拒绝的像素保持未知，不会被当成空闲。调整后须重建 `uav_perception` 并重启算法 launch，观察 `ObstaclePoints`、`RawLocalHits` 和 `ObservedLocalMap`，确认真实边缘仍有深度且近距假带消失。
+双目软件深度会拒绝水平 7 像素窗口灰度标准差低于 1 的点。无纹理区域的水平视差不可可靠测量；仿真曾在静止时把同一条深灰色图像带交替估成 0.36–0.94 m 的障碍，导致 `RawLocalHits` 产生横排假击中。参数 `texture_std_min` 可按实际相机噪声调整；拒绝的像素不会生成障碍点。调整后须重建 `uav_perception` 并重启算法 launch，观察 `ObstaclePoints`、`RawLocalHits` 和 `ObservedLocalMap`，确认真实边缘仍有深度且近距假带消失。
 
 ### 在 RViz 对照地图、轨迹与坐标系
 
 仿真启动的 `prior_mapper` 立即发布 `/uav1/global_map`，无需等待相机看到场地。它由当前 RMUC2025 STL 的 1.5–2.5 m 高度层预先生成，0.1 m 栅格覆盖整片场地；场地内空白为该高度层的参考空闲区域，外部为未知。预制栅格采用 Gazebo 世界 ENU 坐标，发布节点利用仿真出生点和 PX4 初始姿态将其对齐到各机的 `uavN_local_nwu`；视觉定位稳定约 2 秒后固定这个显示变换。相机模型安装姿态为零，Gazebo 相机 +X 视线与 x500 机头 +X 一致。RViz 的 TF 中还可查看 `uavN_camera_mount` 和 `uavN_camera_optical`；光学坐标系按 ROS 约定以 +Z 为视线。先验图是**仿真可视化参考**，并不保证飞行安全：STL 变更、实际高度不同、动态障碍、出生点设置变化或定位漂移都会造成偏差。局部规划仍只使用实时 `/uav1/local_map`。场地 STL 更新后，先运行 `RM27_FIELD_MESH=/path/to/rmuc_2025.stl PYTHONNOUSERSITE=1 python3 tools/generate_field_prior.py` 重新生成打包地图，再重建 `uav_mapping`。
 
-RViz 默认打开 `PriorFieldMap`、`Px4EstimatedOdom`、`TF` 和 `LocalPath`；可勾选 `ObservedLocalMap` 查看导航当前使用的局部窗口。排查黑块时，先暂时关闭 `PriorFieldMap` 和 `ObservedLocalMap` 的叠加，分别打开 `RawLocalHits` 和 `ObstaclePoints`：原始点云是相机报告的位置，`RawLocalHits` 中的 100 是高度带内的原始击中，`ObservedLocalMap` 中额外的 100 是 0.35 m 安全膨胀。两张局部图中 0=已观测空闲，-1=未观测，100=占用；当前点云避障策略仅让占用格挡路，未知格可通行，局部地图边界之外仍不可通行。低飞时若点云在机体下方约 0.25 m 的高度带内出现成片水平面，地面也会成为占用格，不应简单清空或放行；先核对飞行高度、相机外参与深度质量。Fixed Frame 为 `uav1_local_nwu`，TF 树应出现 `uav1_local_nwu → uav1`。`/uav1/odom` 是 PX4 的估计里程计，**不是**独立真值；若 VIO 发散，里程计相对先验图也会偏移。检查 TF 可单独运行：
+RViz 默认打开 `ObservedLocalMap`、`Px4EstimatedOdom`、`TF` 和 `LocalPath`，默认关闭 `PriorFieldMap`，可单独勾选先验图做对照。排查黑块时，分别打开 `RawLocalHits` 和 `ObstaclePoints`：原始点云是相机报告的位置，`RawLocalHits` 中的 100 是高度带内的原始击中，`ObservedLocalMap` 中额外的 100 是 0.35 m 安全膨胀。两张局部图只输出 0 和 100：100=点云占用及其膨胀，0=没有保留的障碍击中；0 不代表相机证明该区域安全。先验 `/uav1/global_map` 仍是独立参考图，保留它自己的未知区，不参与导航。低飞时若点云在机体下方约 0.25 m 的高度带内出现成片水平面，地面也会成为占用格；先核对飞行高度、相机外参与深度质量。Fixed Frame 为 `uav1_local_nwu`，TF 树应出现 `uav1_local_nwu → uav1`。`/uav1/odom` 是 PX4 的估计里程计，**不是**独立真值；若 VIO 发散，里程计相对先验图也会偏移。检查 TF 可单独运行：
 
 ```bash
 ros2 run tf2_ros tf2_echo uav1_local_nwu uav1
@@ -100,7 +100,7 @@ ros2 run tf2_ros tf2_echo uav1_local_nwu uav1
 
 在确认 VIO 稳定、PX4 已融合视觉、点云与局部地图持续更新后，再在仿真中测试目标导航；若出现 `HOLD_MAP_STALE`、里程计跳变或视觉失效，停止任务并保存录包，不把积累图当作继续飞行的依据。
 
-局部避障以当前高度观察到的障碍点为依据：0.1 m 局部图对占用格膨胀 0.35 m，未知格可通行；若到目标的直线无占用格，优先直接给出前方路径，否则 A* 寻路、路径平滑，每次只下发最多 0.4 m 的航点；规划超时才尝试 VFH。由于只有一台前视相机，未知区域内可能存在未看到的墙，真机使用前必须先在仿真确认该策略。下一段路径偏离机头超过 15° 时，导航状态变为 `ALIGNING_PATH`：先锁定当前位置并原地转向，实际航向进入 8° 且水平速度低于 0.15 m/s 后才下发前进航点；Offboard 还会拒绝相对机头超过 20° 的平移目标。偏航设定点按经过时间以 45°/s 推进，PX4 自身的转向限制仍会生效。`HOLD_MAP_STALE`、`HOLD_ALTITUDE_CHANGE_UNSUPPORTED`、`HOLD_OVERSPEED`、`POSE_INVALID` 分别表示地图未更新、高度不匹配、速度超限和位置失效；允许未知格通行不会取消这些状态。RViz 的里程计箭头只保留当前一帧，以免旋转历史显示成扇形。
+局部避障以当前高度观察到的障碍点为依据：0.1 m 局部图对占用格膨胀 0.35 m，其余格子输出 0；若到目标的直线无占用格，优先直接给出前方路径，否则 A* 寻路、路径平滑，每次只下发最多 0.4 m 的航点；规划超时才尝试 VFH。由于只有一台前视相机，未观察区域内可能存在墙，真机使用前必须先在仿真确认该策略。下一段路径偏离机头超过 15° 时，导航状态变为 `ALIGNING_PATH`：先锁定当前位置并原地转向，实际航向进入 8° 且水平速度低于 0.15 m/s 后才下发前进航点；Offboard 还会拒绝相对机头超过 20° 的平移目标。偏航设定点按经过时间以 45°/s 推进，PX4 自身的转向限制仍会生效。`HOLD_MAP_STALE`、`HOLD_ALTITUDE_CHANGE_UNSUPPORTED`、`HOLD_OVERSPEED`、`POSE_INVALID` 分别表示地图未更新、高度不匹配、速度超限和位置失效；二值地图不会取消这些状态。RViz 的里程计箭头只保留当前一帧，以免旋转历史显示成扇形。
 
 确认仿真起飞区无遮挡后请求起飞。服务返回 `Start requested` 只表示请求已接受，实际解锁和起飞仍须观察 `/uav1/state`、PX4 状态和 Gazebo。
 

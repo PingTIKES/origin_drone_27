@@ -13,7 +13,7 @@ Visualization Manager:
       Cell Size: 1
     - Class: rviz_default_plugins/Map
       Name: PriorFieldMap
-      Enabled: true
+      Enabled: false
       Alpha: 0.75
       Topic:
         Value: /uav1/global_map
@@ -22,8 +22,8 @@ Visualization Manager:
         Depth: 1
     - Class: rviz_default_plugins/Map
       Name: ObservedLocalMap
-      Enabled: false
-      Alpha: 0.55
+      Enabled: true
+      Alpha: 0.85
       Topic:
         Value: /uav1/local_map
         Durability Policy: Volatile

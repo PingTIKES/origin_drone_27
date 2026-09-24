@@ -110,7 +110,7 @@ class GeometryTests(unittest.TestCase):
         g.update(np.array([0.,0.,0.]),np.array([[2.,0.,0.]]),1.,0.)
         x,y=g.cell((2.,0.));self.assertEqual(g.occupancy(1)[y,x],100)
         x,y=g.cell((1.,0.));self.assertEqual(g.occupancy(1)[y,x],0)
-        self.assertTrue((g.occupancy(4)==-1).all())
+        self.assertTrue((g.occupancy(4)==0).all())
 
     def test_raw_map_separates_depth_hits_from_inflation(self):
         g=RollingGrid(8.,.1,inflation=.35)
@@ -132,7 +132,7 @@ class GeometryTests(unittest.TestCase):
         g.recenter((1.,1.))
         x,y=g.cell((2.,0.));self.assertEqual(g.occupancy(1)[y,x],100)
         self.assertTrue(np.isneginf(g.seen[-5:,:]).all())
-        g.recenter((100.,100.));self.assertTrue((g.occupancy(1)==-1).all())
+        g.recenter((100.,100.));self.assertTrue((g.occupancy(1)==0).all())
 
     def test_body_rotation_full_attitude(self):
         r=body_to_nwu([math.sqrt(.5),0,0,math.sqrt(.5)])
@@ -263,7 +263,16 @@ class GeometryTests(unittest.TestCase):
         g=RollingGrid(8.,.1,inflation=0)
         g.update(np.zeros(3),np.array([[4.,0.,-1.]]),1.,0.,half_height=.25)
         x,y=g.cell((.5,0));self.assertEqual(g.occupancy(1)[y,x],0)
-        x,y=g.cell((2.,0));self.assertEqual(g.occupancy(1)[y,x],-1)
+        x,y=g.cell((2.,0));self.assertEqual(g.occupancy(1)[y,x],0)
+
+    def test_local_maps_never_publish_unknown_cells(self):
+        g=RollingGrid(8.,.1,inflation=.35)
+        for inflate in (False,True):
+            self.assertEqual(set(np.unique(g.occupancy(0,inflate=inflate))),{0})
+        g.update(np.zeros(3),np.array([[2.,0.,0.]]),1.,0.)
+        for inflate in (False,True):
+            self.assertEqual(set(np.unique(g.occupancy(1,inflate=inflate))),{0,100})
+            self.assertEqual(set(np.unique(g.occupancy(10,inflate=inflate))),{0})
 
 
 # Minimal ROS message/node stubs. Actual callbacks run unchanged.

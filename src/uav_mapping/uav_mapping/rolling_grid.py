@@ -1,8 +1,8 @@
-"""ROS-independent, bounded rolling occupancy grid. Arrays indexed [y, x].
+"""ROS-independent, bounded rolling obstacle grid. Arrays indexed [y, x].
 
 Map axes stay fixed in local NWU; only the integer-cell origin rolls.
-Unknown is never free. Each scan votes at most once per cell, with hits
-taking priority over misses. Expired evidence returns to UNKNOWN, not free.
+Published cells are binary: retained, inflated cloud hits are 100; all
+other cells are 0. Each scan votes once per cell, with hits taking priority.
 """
 import math
 import numpy as np
@@ -102,8 +102,8 @@ class RollingGrid:
 
     def update(self, sensor, endpoints, now, altitude, half_height=.25):
         """Conservative height slab: hits in slab; clip floor/ceiling rays to
-        the slab. Clipped rays may discover unknown free cells but cannot erase hits.
-        Invalid/no-return pixels produce NO ray. No unobserved self disk is carved.
+        the slab. Clipped rays can clear old hits but cannot erase new hits.
+        Invalid/no-return pixels produce NO ray.
         """
         stale = now - self.seen > self.memory
         self.odds[stale], self.seen[stale] = 0, -np.inf
@@ -133,8 +133,7 @@ class RollingGrid:
 
     def occupancy(self, now, inflate=True):
         recent = (now - self.seen >= 0) & (now - self.seen <= self.memory)
-        out = np.full(self.odds.shape, -1, np.int8)
-        out[recent & (self.odds < 0)] = 0
+        out = np.zeros(self.odds.shape, np.int8)
         hit = recent & (self.odds >= 0)
         if not inflate:
             out[hit] = 100
