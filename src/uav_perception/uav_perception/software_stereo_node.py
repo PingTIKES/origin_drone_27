@@ -14,9 +14,11 @@ from uav_perception.stereo_matcher import StereoMatcher
 class SoftwareStereo(Node):
     def __init__(self):
         super().__init__('software_stereo')
-        for k,v in dict(config='',t_body_imu=np.eye(4).ravel().tolist(),rate=5.,sync_slop=.003).items(): self.declare_parameter(k,v)
+        for k,v in dict(config='',t_body_imu=np.eye(4).ravel().tolist(),rate=5.,sync_slop=.003,
+                        texture_std_min=1.0).items(): self.declare_parameter(k,v)
         p = lambda k:self.get_parameter(k).value
-        self.matcher = StereoMatcher(p('config'),np.array(p('t_body_imu')).reshape(4,4))
+        self.matcher = StereoMatcher(p('config'),np.array(p('t_body_imu')).reshape(4,4),
+                                     texture_std_min=p('texture_std_min'))
         cv2.setNumThreads(2)
         self.period,self.last = 1/p('rate'),-float('inf')
         self.bridge = CvBridge()

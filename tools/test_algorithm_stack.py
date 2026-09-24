@@ -175,6 +175,18 @@ class GeometryTests(unittest.TestCase):
         expected=m.p[0,0]*m.baseline/8.
         self.assertAlmostEqual(float(np.nanmedian(depth[:,150:-20])),expected,delta=.1)
 
+    def test_stereo_rejects_textureless_band(self):
+        config=ROOT/'src/uav_localization/config/openvins_sim/estimator_config.yaml'
+        m=StereoMatcher(config,np.eye(4))
+        rng=np.random.default_rng(10)
+        left=rng.integers(0,256,(480,640),dtype=np.uint8)
+        right=np.zeros_like(left);right[:,:-8]=left[:,8:]
+        left[260:280]=23;right[260:280]=23
+        pair={'cam0':right,'cam1':left}
+        depth=m.depth(pair['cam0'],pair['cam1'])
+        self.assertTrue(np.isnan(depth[264:276,150:620]).all())
+        self.assertGreater(np.isfinite(depth[100:200,150:620]).sum(),1000)
+
     def test_sim_camera_points_along_body_front(self):
         model=ET.parse(ROOT/'worlds/models/d435i/model.sdf')
         for sensor in model.findall('.//sensor'):

@@ -86,6 +86,8 @@ ros2 topic echo --once /uav1/navigation_state
 
 仿真 x500 的 `/uavN/obstacles` 在深度反投影到机体 FLU 后，会滤掉落入已知机体碰撞盒和四个桨盘扫掠范围的点。`stereo_depth_node` 日志每 5 秒报告过滤点数；若始终为 0，原地打转就不能归因于点云中的机体点，应继续检查双目深度伪点、`local_map` 的已知/未知区域、起点膨胀、VIO 与导航状态。该掩膜仅针对仿真 x500；真机默认关闭，须测量完整机架、相机安装位姿和桨盘尺寸后才能配置对应模型。掩膜只删除位于机体物理空间内的点，不会清除相机前方的整片区域。
 
+双目软件深度会拒绝水平 7 像素窗口灰度标准差低于 1 的点。无纹理区域的水平视差不可可靠测量；仿真曾在静止时把同一条深灰色图像带交替估成 0.36–0.94 m 的障碍，导致 `RawLocalHits` 产生横排假击中。参数 `texture_std_min` 可按实际相机噪声调整；拒绝的像素保持未知，不会被当成空闲。调整后须重建 `uav_perception` 并重启算法 launch，观察 `ObstaclePoints`、`RawLocalHits` 和 `ObservedLocalMap`，确认真实边缘仍有深度且近距假带消失。
+
 ### 在 RViz 对照地图、轨迹与坐标系
 
 仿真启动的 `prior_mapper` 立即发布 `/uav1/global_map`，无需等待相机看到场地。它由当前 RMUC2025 STL 的 1.5–2.5 m 高度层预先生成，0.1 m 栅格覆盖整片场地；场地内空白为该高度层的参考空闲区域，外部为未知。预制栅格采用 Gazebo 世界 ENU 坐标，发布节点利用仿真出生点和 PX4 初始姿态将其对齐到各机的 `uavN_local_nwu`；视觉定位稳定约 2 秒后固定这个显示变换。相机模型安装姿态为零，Gazebo 相机 +X 视线与 x500 机头 +X 一致。RViz 的 TF 中还可查看 `uavN_camera_mount` 和 `uavN_camera_optical`；光学坐标系按 ROS 约定以 +Z 为视线。先验图是**仿真可视化参考**，并不保证飞行安全：STL 变更、实际高度不同、动态障碍、出生点设置变化或定位漂移都会造成偏差。局部规划仍只使用实时 `/uav1/local_map`。场地 STL 更新后，先运行 `RM27_FIELD_MESH=/path/to/rmuc_2025.stl PYTHONNOUSERSITE=1 python3 tools/generate_field_prior.py` 重新生成打包地图，再重建 `uav_mapping`。

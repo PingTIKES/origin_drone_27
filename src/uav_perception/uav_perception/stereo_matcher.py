@@ -5,7 +5,7 @@ from uav_localization.calibration import validate_config, transform
 
 
 class StereoMatcher:
-    def __init__(self, config, t_body_imu, disparities=96):
+    def __init__(self, config, t_body_imu, disparities=96, texture_std_min=1.0):
         _, cams, _ = validate_config(config)
         t0,t1 = (transform(cams[c]['T_imu_cam']) for c in ('cam0','cam1'))
         # Choose left camera geometrically, not by an assumed device stream name.
@@ -28,6 +28,8 @@ class StereoMatcher:
         self.body_optical[:3,:3] = self.body_optical[:3,:3]@r1.T
         self.maps = [cv2.initUndistortRectifyMap(k,d,r,p,self.size,cv2.CV_32FC1) for k,d,r,p in ((kl,dl,r1,p1),(kr,dr,r2,p2))]
         if disparities<=0 or disparities%16: raise ValueError('disparities must be positive multiple of 16')
+        if texture_std_min < 0: raise ValueError('texture_std_min must be nonnegative')
+        self.texture_std_min = float(texture_std_min)
         self.matcher = cv2.StereoSGBM_create(minDisparity=0,numDisparities=disparities,blockSize=5,
                   P1=8*25,P2=32*25,disp12MaxDiff=1,uniquenessRatio=15,speckleWindowSize=80,
                   speckleRange=2,mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY)
@@ -42,5 +44,13 @@ class StereoMatcher:
         disparity = self.matcher.compute(*pair).astype(np.float32)/16.
         depth = np.full(disparity.shape,np.nan,np.float32)
         valid = disparity>0
+        if self.texture_std_min:
+            # Horizontal disparity is unobservable in a flat image row. Gazebo's
+            # nearly constant infrared background can otherwise create a crisp
+            # but false near-depth band across hundreds of pixels.
+            image = pair[0].astype(np.float32)
+            mean = cv2.boxFilter(image,-1,(7,1))
+            variance = cv2.boxFilter(image*image,-1,(7,1))-mean*mean
+            valid &= variance >= self.texture_std_min**2
         depth[valid] = self.p[0,0]*self.baseline/disparity[valid]
         return depth
