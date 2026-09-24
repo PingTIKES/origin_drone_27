@@ -63,7 +63,7 @@ class OffboardControl(Node):
         self.declare_parameter('auto_takeoff', True)    # 是否自动起飞（仿真默认开）
         self.declare_parameter('reach_tol', 0.25)       # 航点到达容差 m
         self.declare_parameter('waypoint_timeout', 1.0)
-        self.declare_parameter('forward_heading_limit_deg', 20.0)
+        self.declare_parameter('forward_heading_limit_deg', 35.0)
         self.declare_parameter('max_yaw_rate_deg_s', 45.0)
         self.declare_parameter('pose_timeout', .5)
         self.declare_parameter('require_vio', False)

@@ -356,6 +356,15 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(n.state,'ASTAR')
         self.assertGreater(n.pub.messages[-1].x,1.)
 
+    def test_nav_keeps_moving_during_small_heading_correction(self):
+        n=self.nav();n.pose.heading=math.radians(20);n.tick()
+        self.assertEqual(n.state,'ASTAR')
+        self.assertGreater(n.pub.messages[-1].x,1.)
+        self.assertAlmostEqual(n.yaw_pub.messages[-1].data,0.)
+        n=self.nav();n.pose.heading=math.radians(40);n.tick()
+        self.assertEqual(n.state,'ALIGNING_PATH')
+        self.assertEqual((n.pub.messages[-1].x,n.pub.messages[-1].y),(1.,-1.))
+
     def test_nav_brakes_before_new_direction(self):
         n=self.nav();n.pose.heading=math.pi;n.pose.vx=.4;n.tick()
         self.assertEqual(n.state,'ALIGNING_PATH')
@@ -414,6 +423,11 @@ class AdapterTests(unittest.TestCase):
         o._cb_local_pos(position())
         o._cb_waypoint(Point(0.,-1.,-2.));o._tick()
         self.assertEqual(o.pub_setpoint.messages[-1].position,[1.,-1.,-2.])
+        o._cb_waypoint(Point(1.4,-1.,-2.));o._tick()
+        self.assertEqual(o.pub_setpoint.messages[-1].position,[1.4,-1.,-2.])
+
+    def test_offboard_allows_small_forward_turn(self):
+        o=Offboard();p=position();p.heading=math.radians(25);o._cb_local_pos(p);o.state='MISSION'
         o._cb_waypoint(Point(1.4,-1.,-2.));o._tick()
         self.assertEqual(o.pub_setpoint.messages[-1].position,[1.4,-1.,-2.])
 

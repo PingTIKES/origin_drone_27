@@ -1,7 +1,7 @@
 """Single output arbiter: local A* -> bounded VFH -> fixed-position hold.
 
 Input/output waypoints are PX4 local NED; all map computation uses NWU.
-No command is forwarded without a fresh valid pose and observed map.
+No command is forwarded without a fresh valid pose and local obstacle map.
 """
 import math
 import time
@@ -23,7 +23,7 @@ class LocalNavigator(Node):
                         goal_timeout=1., step_distance=.4, planning_budget=.025,
                         max_speed=.6, braking_accel=.8, reaction_time=.3,
                         height_tolerance=.12, safety_priority_time=2.2,
-                        align_enter_deg=15., align_exit_deg=8., align_speed=.15)
+                        align_enter_deg=30., align_exit_deg=15., align_speed=.15)
         for key, val in defaults.items(): self.declare_parameter(key, val)
         self.p = {k: self.get_parameter(k).value for k in defaults}
         if not 0 < self.p['align_exit_deg'] < self.p['align_enter_deg'] < 90 or \
