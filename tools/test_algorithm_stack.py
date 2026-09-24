@@ -20,6 +20,7 @@ for pkg in ('uav_mapping','uav_planning','uav_localization','uav_perception','ua
 from uav_mapping.rolling_grid import RollingGrid,body_to_nwu,body_quaternion_to_nwu
 from uav_planning.local_grid_planner import LocalGridPlanner,bounded_step
 from uav_perception.depth_geometry import decode_depth
+from uav_perception.self_mask import x500_external_mask
 from uav_localization.vio_geometry import rotation,quaternion,convert
 from uav_localization.calibration import validate_config, read_yaml, write_opencv_yaml
 from uav_perception.stereo_matcher import StereoMatcher
@@ -28,6 +29,13 @@ from uav_swarm.avoidance import (local_to_common,common_to_local,closest_approac
 
 
 class GeometryTests(unittest.TestCase):
+    def test_x500_self_mask_keeps_external_obstacles(self):
+        points=np.array([[0.,0.,0.], [.174,.174,.06],
+                         [.33,.174,.06], [.5,0.,0.], [.19,0.,0.],
+                         [.174,.174,.2], [.174,.35,.06]])
+        np.testing.assert_array_equal(x500_external_mask(points),
+                                      [False,False,True,True,True,True,True])
+
     def test_swarm_transform_round_trip(self):
         local=np.array([1.2,-.4,-2.])
         common=local_to_common(local,(9.4,1.3),.37)

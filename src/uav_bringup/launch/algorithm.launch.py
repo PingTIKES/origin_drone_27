@@ -92,6 +92,7 @@ def setup(context):
                   'cx':float(matcher.p[0,2]) if mode=='software' else 319.5,
                   'cy':float(matcher.p[1,2]) if mode=='software' else 239.5,
                   'require_camera_info':mode=='hardware','preserve_stamp':True,'depth_scale':float(arg('depth_scale')),
+                  'self_mask_model':'x500' if sim else 'none',
                   'frame_decimation':1 if mode=='software' else 3},depth_remaps))
     nodes.append(node('uav_mapping','rolling_mapper','rolling_mapper',
                       {'uav_id':uid,'px4_ns':f'px4_{uid}','cam_xyz':t_bc[:3,3].tolist()}))

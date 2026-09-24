@@ -23,6 +23,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from uav_perception.depth_geometry import decode_depth
+from uav_perception.self_mask import x500_external_mask
 
 from sensor_msgs.msg import Image, PointCloud2, CameraInfo
 from sensor_msgs_py import point_cloud2
@@ -52,6 +53,7 @@ class StereoDepthNode(Node):
         self.declare_parameter('frame_decimation', 3)  # 每 k 帧处理 1 帧（15→5Hz）
         self.declare_parameter('min_range', 0.3)       # 盲区/噪声截断 m
         self.declare_parameter('max_range', 8.0)       # 远界 m
+        self.declare_parameter('self_mask_model', 'none')  # 仅仿真 x500 可选；真机须实测机架
 
         uid = int(self.get_parameter('uav_id').value)
         self.frame_id = f'uav{uid}'
@@ -72,6 +74,9 @@ class StereoDepthNode(Node):
         self.decim = int(self.get_parameter('frame_decimation').value)
         self.min_r = float(self.get_parameter('min_range').value)
         self.max_r = float(self.get_parameter('max_range').value)
+        self.self_mask_model = str(self.get_parameter('self_mask_model').value)
+        if self.self_mask_model not in ('none', 'x500'):
+            raise ValueError('self_mask_model must be none or x500')
 
         self.create_subscription(Image, 'd435i/depth/image_raw', self._cb_depth, qos_profile_sensor_data)
         self.create_subscription(CameraInfo, 'd435i/depth/camera_info', self._cb_info, qos_profile_sensor_data)
@@ -80,6 +85,8 @@ class StereoDepthNode(Node):
         self._count = 0
         self._depth_count_window = 0
         self._cloud_count_window = 0
+        self._self_points_window = 0
+        self._candidate_points_window = 0
         self._last_empty_warning = -float('inf')
         self._grid_cache = {}  # (h, w) -> (v, u) 抽稀后的像素网格
         self.create_timer(5., self._report_status)
@@ -89,12 +96,18 @@ class StereoDepthNode(Node):
             f'每 {self.decim} 帧处理 1 帧)')
 
     def _report_status(self):
+        if self.self_mask_model != 'none' and self._candidate_points_window:
+            self.get_logger().info(
+                f'5 秒内自体掩膜过滤 {self._self_points_window}/{self._candidate_points_window} 个深度点'
+            )
         if not self._depth_count_window:
             self.get_logger().warn('5 秒内未收到深度图；检查深度话题及发布/订阅 QoS')
         elif not self._cloud_count_window:
             self.get_logger().warn(f'5 秒内收到 {self._depth_count_window} 帧深度图，但没有发布点云；检查深度解码、有效量程和节点日志')
         self._depth_count_window = 0
         self._cloud_count_window = 0
+        self._self_points_window = 0
+        self._candidate_points_window = 0
 
     def _cb_info(self, msg):
         # This node consumes rectified depth, hence P, not distorted-image K.
@@ -143,6 +156,13 @@ class StereoDepthNode(Node):
         y_o = (v - self.cy) * z / self.fy
         # 光学系 → 机体 FLU（x 前、y 左、z 上）+ 安装平移
         cloud = np.stack([x_o, y_o, z], axis=1) @ self.rotation.T + self.cam_xyz
+        if self.self_mask_model == 'x500':
+            keep = x500_external_mask(cloud)
+            self._candidate_points_window += len(cloud)
+            self._self_points_window += int(len(cloud) - np.count_nonzero(keep))
+            cloud = cloud[keep]
+        if len(cloud) == 0:
+            return
         # 深度图、地图与 TF 使用同一 ROS 时钟。
         hdr = Header()
         hdr.stamp = msg.header.stamp if self.preserve_stamp else self.get_clock().now().to_msg()
