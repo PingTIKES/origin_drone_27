@@ -64,6 +64,7 @@ class OffboardControl(Node):
         self.declare_parameter('reach_tol', 0.25)       # 航点到达容差 m
         self.declare_parameter('waypoint_timeout', 1.0)
         self.declare_parameter('forward_heading_limit_deg', 20.0)
+        self.declare_parameter('max_yaw_rate_deg_s', 45.0)
         self.declare_parameter('pose_timeout', .5)
         self.declare_parameter('require_vio', False)
         self.declare_parameter('target_system', 0)  # 0 preserves SITL instance+1
@@ -78,14 +79,18 @@ class OffboardControl(Node):
         self.reach_tol = float(self.get_parameter('reach_tol').value)
         self.wp_timeout = float(self.get_parameter('waypoint_timeout').value)
         self.forward_heading_limit = math.radians(float(self.get_parameter('forward_heading_limit_deg').value))
+        self.max_yaw_rate = math.radians(float(self.get_parameter('max_yaw_rate_deg_s').value))
         if not 0 < self.forward_heading_limit < math.pi/2:
             raise ValueError('forward heading limit must be below 90 degrees')
+        if not 0 < self.max_yaw_rate <= 2*math.pi:
+            raise ValueError('max_yaw_rate_deg_s must be between 0 and 360')
         self.pose_timeout = float(self.get_parameter('pose_timeout').value)
         self.require_vio = bool(self.get_parameter('require_vio').value)
         self.pos_at = self.wp_at = self.vio_at = self.yaw_at = -math.inf
         self.vio_ok = False
         self.hold_target = self.desired_yaw = self.yaw_setpoint = self.pose_reset = None
         self.heading_hold_target = None
+        self.last_yaw_setpoint_at = None
         self.takeoff_xy = None
         self.takeoff_reached_since = None
 
@@ -220,8 +225,11 @@ class OffboardControl(Node):
         now=self.get_clock().now().nanoseconds*1e-9
         if self.desired_yaw is not None and 0<=now-self.yaw_at<1. and self.yaw_setpoint is not None:
             delta=(self.desired_yaw-self.yaw_setpoint+math.pi)%(2*math.pi)-math.pi
-            self.yaw_setpoint+=max(-.04,min(.04,delta))
+            dt=.1 if self.last_yaw_setpoint_at is None else max(0.,min(.2,now-self.last_yaw_setpoint_at))
+            limit=self.max_yaw_rate*dt
+            self.yaw_setpoint+=max(-limit,min(limit,delta))
             msg.yaw=self.yaw_setpoint
+        self.last_yaw_setpoint_at=now
         self.pub_setpoint.publish(msg)
 
     def _dist_to(self, x, y, z):

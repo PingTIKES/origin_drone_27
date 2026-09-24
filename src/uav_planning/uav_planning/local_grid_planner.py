@@ -1,4 +1,4 @@
-"""Bounded A* and conservative VFH fallback on an observed local grid."""
+"""Bounded A* and VFH fallback on observed obstacle hits in a local grid."""
 import heapq
 import math
 import time
@@ -12,8 +12,9 @@ class LocalGridPlanner:
         self.ny, self.nx = self.occ.shape
         self.res = resolution
         self.X_MIN, self.Y_MIN = origin
-        # Store [x,y]; unknown is blocked as well.
-        self.grid = (self.occ != 0).T
+        # Only observed occupied cells (including inflation) block the route.
+        # Unknown cells are traversable by the requested point-cloud-only policy.
+        self.grid = (self.occ > 0).T
 
     def _x2i(self, x): return math.floor((x - self.X_MIN) / self.res)
     def _y2j(self, y): return math.floor((y - self.Y_MIN) / self.res)
@@ -40,10 +41,13 @@ class LocalGridPlanner:
         return all(self.in_bounds(x, y) and not self.grid[x, y] for x, y in ray_cells(a, b))
 
     def plan(self, start, goal, budget=.025, max_expansions=6000):
-        """Return (status, path). PARTIAL ends in reachable observed space;
-        no claim of global completeness beyond the rolling map / camera FOV.
+        """Return (status, path). PARTIAL ends inside the rolling map;
+        no claim of obstacle clearance beyond its finite bounds.
         """
         if self.occupied(*start): return 'BLOCKED_START', []
+        # Prefer the direct line when it has no measured obstacle. In particular,
+        # unknown space must not force A* to take an apparent backward detour.
+        if self.line_free(start, goal): return 'ASTAR', [start, goal]
         a = self._x2i(start[0]), self._y2j(start[1])
         b = self._x2i(goal[0]), self._y2j(goal[1])
         h = lambda cell: math.hypot(cell[0]-b[0], cell[1]-b[1])
@@ -86,7 +90,7 @@ class LocalGridPlanner:
 
     def vfh(self, start, goal, distance=.4, clearance=.8, previous=None):
         """72-sector binary polar histogram of checked straight corridors.
-        Unlike the old point-only VFH, unknown sectors are BLOCKED. This is
+        Unknown sectors remain traversable; measured obstacles block. This is
         a bounded fallback, not a substitute for A* after an actual NO_PATH.
         """
         target = math.atan2(goal[1]-start[1], goal[0]-start[0])

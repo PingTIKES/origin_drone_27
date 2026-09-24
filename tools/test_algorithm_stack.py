@@ -66,10 +66,14 @@ class GeometryTests(unittest.TestCase):
                                                   max_speed=.6,horizon=2.,base_radius=.65,
                                                   delay_margin=0.,own_id=1)
         self.assertTrue(feasible);np.testing.assert_allclose(selected,[.4,0.])
-    def test_unknown_blocked(self):
+    def test_unknown_traversable_but_observed_obstacles_block(self):
         p=LocalGridPlanner(np.full((20,20),-1),.1,(0,0))
-        self.assertEqual(p.plan((.5,.5),(1.,1.))[0],'BLOCKED_START')
-        self.assertIsNone(p.vfh((.5,.5),(1.,1.)))
+        self.assertEqual(p.plan((.5,.5),(1.,1.)),('ASTAR',[(.5,.5),(1.,1.)]))
+        self.assertIsNotNone(p.vfh((.5,.5),(1.,1.)))
+        grid=np.full((20,20),-1);grid[5:16,8]=100
+        p=LocalGridPlanner(grid,.1,(0,0))
+        self.assertFalse(p.line_free((.5,1.),(1.2,1.)))
+        self.assertEqual(p.plan((.85,1.),(1.2,1.))[0],'BLOCKED_START')
 
     def test_u_shape(self):
         grid=np.zeros((40,40),np.int8)
@@ -87,7 +91,8 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(p.plan((.5,.5),(1.5,1.5))[0],'NO_PATH')
 
     def test_budget_fallback_and_bound(self):
-        p=LocalGridPlanner(np.zeros((30,30)),.1,(0,0))
+        grid=np.zeros((30,30));grid[15,15]=100
+        p=LocalGridPlanner(grid,.1,(0,0))
         self.assertEqual(p.plan((1.,1.),(2.,2.),budget=-1)[0],'BUDGET')
         out=p.vfh((1.,1.),(2.,2.))
         self.assertLessEqual(math.dist((1.,1.),out),.401)
@@ -326,6 +331,12 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(len(n.pub.messages),1)
         self.assertLessEqual(n.pub.messages[0].x,1.401)
 
+    def test_nav_unknown_forward_goal_stays_forward(self):
+        n=self.nav();n.map.data=[-1]*1600;n.tick()
+        self.assertEqual(n.state,'ASTAR')
+        self.assertGreater(n.pub.messages[-1].x,1.)
+        self.assertAlmostEqual(n.pub.messages[-1].y,-1.)
+
     def test_nav_turns_before_moving_toward_goal_behind(self):
         n=self.nav();n.pose.heading=math.pi;n.tick()
         self.assertEqual(n.state,'ALIGNING_PATH')
@@ -367,7 +378,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(len(n.yaw_pub.messages),0)
 
     def test_budget_vfh(self):
-        n=self.nav();n.p['planning_budget']=-1;n.tick()
+        n=self.nav();n.map.data[10*40+15]=100;n.p['planning_budget']=-1;n.tick()
         self.assertEqual(n.state,'VFH_FALLBACK')
 
     def test_altitude_and_speed(self):
@@ -396,6 +407,13 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(o.pub_setpoint.messages[-1].position,[1.,-1.,-2.])
         o._cb_waypoint(Point(1.4,-1.,-2.));o._tick()
         self.assertEqual(o.pub_setpoint.messages[-1].position,[1.4,-1.,-2.])
+
+    def test_offboard_yaw_rate_uses_elapsed_time(self):
+        o=Offboard();o._cb_local_pos(position());o.desired_yaw=math.pi/2;o.yaw_at=o.clock
+        o._publish_setpoint(1.,-1.,-2.)
+        self.assertAlmostEqual(o.pub_setpoint.messages[-1].yaw,math.radians(4.5),places=5)
+        o.clock+=.2;o._publish_setpoint(1.,-1.,-2.)
+        self.assertAlmostEqual(o.pub_setpoint.messages[-1].yaw,math.radians(13.5),places=5)
 
     def test_takeoff_requires_stable_altitude(self):
         o=Offboard();o.state='TAKEOFF';o.takeoff_xy=(1.,-1.)
