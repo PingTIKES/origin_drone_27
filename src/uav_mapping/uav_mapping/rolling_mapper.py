@@ -39,6 +39,7 @@ class RollingMapper(Node):
                                  f'/{p("px4_ns")}/fmu/out/vehicle_attitude', self.attitude, qos_profile_sensor_data)
         self.create_subscription(PointCloud2, 'obstacles', self.cloud, qos_profile_sensor_data)
         self.pub = self.create_publisher(OccupancyGrid, 'local_map', 1)
+        self.raw_pub = self.create_publisher(OccupancyGrid, 'local_map_raw', 1)
         self.odom_pub = self.create_publisher(Odometry, 'odom', 10)
         self.tf_pub = TransformBroadcaster(self)
 
@@ -145,6 +146,11 @@ class RollingMapper(Node):
         out.info.origin.orientation.w = 1.
         out.data = self.grid.occupancy(now).ravel().tolist()
         self.pub.publish(out)
+        raw = OccupancyGrid()
+        raw.header = out.header
+        raw.info = out.info
+        raw.data = self.grid.occupancy(now, inflate=False).ravel().tolist()
+        self.raw_pub.publish(raw)
 
 
 def main(args=None):

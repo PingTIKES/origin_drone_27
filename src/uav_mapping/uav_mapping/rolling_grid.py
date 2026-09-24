@@ -131,11 +131,14 @@ class RollingGrid:
             self.odds[y, x] = min(3., self.odds[y, x] + 1.4)
             self.seen[y, x] = now
 
-    def occupancy(self, now):
+    def occupancy(self, now, inflate=True):
         recent = (now - self.seen >= 0) & (now - self.seen <= self.memory)
         out = np.full(self.odds.shape, -1, np.int8)
         out[recent & (self.odds < 0)] = 0
         hit = recent & (self.odds >= 0)
+        if not inflate:
+            out[hit] = 100
+            return out
         # Include half a cell diagonal: cells represent finite squares.
         radius = math.ceil(self.inflation / self.res + math.sqrt(.5))
         expanded = hit.copy()

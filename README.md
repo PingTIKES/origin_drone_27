@@ -90,7 +90,7 @@ ros2 topic echo --once /uav1/navigation_state
 
 仿真启动的 `prior_mapper` 立即发布 `/uav1/global_map`，无需等待相机看到场地。它由当前 RMUC2025 STL 的 1.5–2.5 m 高度层预先生成，0.1 m 栅格覆盖整片场地；场地内空白为该高度层的参考空闲区域，外部为未知。预制栅格采用 Gazebo 世界 ENU 坐标，发布节点利用仿真出生点和 PX4 初始姿态将其对齐到各机的 `uavN_local_nwu`；视觉定位稳定约 2 秒后固定这个显示变换。相机模型安装姿态为零，Gazebo 相机 +X 视线与 x500 机头 +X 一致。RViz 的 TF 中还可查看 `uavN_camera_mount` 和 `uavN_camera_optical`；光学坐标系按 ROS 约定以 +Z 为视线。先验图是**仿真可视化参考**，并不保证飞行安全：STL 变更、实际高度不同、动态障碍、出生点设置变化或定位漂移都会造成偏差。局部规划仍只使用实时 `/uav1/local_map`。场地 STL 更新后，先运行 `RM27_FIELD_MESH=/path/to/rmuc_2025.stl PYTHONNOUSERSITE=1 python3 tools/generate_field_prior.py` 重新生成打包地图，再重建 `uav_mapping`。
 
-RViz 默认打开 `PriorFieldMap`、`Px4EstimatedOdom`、`TF` 和 `LocalPath`；可勾选 `ObservedLocalMap` 查看导航当前使用的局部窗口。Fixed Frame 为 `uav1_local_nwu`，TF 树应出现 `uav1_local_nwu → uav1`。`/uav1/odom` 是 PX4 的估计里程计，**不是**独立真值；若 VIO 发散，里程计相对先验图也会偏移。检查 TF 可单独运行：
+RViz 默认打开 `PriorFieldMap`、`Px4EstimatedOdom`、`TF` 和 `LocalPath`；可勾选 `ObservedLocalMap` 查看导航当前使用的局部窗口。排查黑块时，先暂时关闭 `PriorFieldMap` 和 `ObservedLocalMap` 的叠加，分别打开 `RawLocalHits` 和 `ObstaclePoints`：原始点云是相机报告的位置，`RawLocalHits` 中的 100 是高度带内的原始击中，`ObservedLocalMap` 中额外的 100 是 0.35 m 安全膨胀。两张局部图中 0=已观测空闲，-1=未观测，100=占用；规划器对后两者均不放行。低飞时若点云在机体下方约 0.25 m 的高度带内出现成片水平面，地面也会成为占用格，不应简单清空或放行；先核对飞行高度、相机外参与深度质量。Fixed Frame 为 `uav1_local_nwu`，TF 树应出现 `uav1_local_nwu → uav1`。`/uav1/odom` 是 PX4 的估计里程计，**不是**独立真值；若 VIO 发散，里程计相对先验图也会偏移。检查 TF 可单独运行：
 
 ```bash
 ros2 run tf2_ros tf2_echo uav1_local_nwu uav1

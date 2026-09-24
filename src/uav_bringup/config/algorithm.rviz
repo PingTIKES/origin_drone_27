@@ -29,6 +29,25 @@ Visualization Manager:
         Durability Policy: Volatile
         Reliability Policy: Reliable
         Depth: 1
+    - Class: rviz_default_plugins/Map
+      Name: RawLocalHits
+      Enabled: false
+      Alpha: 0.75
+      Topic:
+        Value: /uav1/local_map_raw
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        Depth: 1
+    - Class: rviz_default_plugins/PointCloud2
+      Name: ObstaclePoints
+      Enabled: false
+      Topic:
+        Value: /uav1/obstacles
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        Depth: 5
+      Style: Points
+      Size (Pixels): 2
     - Class: rviz_default_plugins/Odometry
       Name: Px4EstimatedOdom
       Enabled: true

@@ -107,6 +107,14 @@ class GeometryTests(unittest.TestCase):
         x,y=g.cell((1.,0.));self.assertEqual(g.occupancy(1)[y,x],0)
         self.assertTrue((g.occupancy(4)==-1).all())
 
+    def test_raw_map_separates_depth_hits_from_inflation(self):
+        g=RollingGrid(8.,.1,inflation=.35)
+        g.update(np.zeros(3),np.array([[2.,0.,0.]]),1.,0.)
+        hit=g.cell((2.,0.));near=g.cell((2.,.2))
+        self.assertEqual(g.occupancy(1,inflate=False)[hit[1],hit[0]],100)
+        self.assertNotEqual(g.occupancy(1,inflate=False)[near[1],near[0]],100)
+        self.assertEqual(g.occupancy(1)[near[1],near[0]],100)
+
     def test_floor_ray_cannot_erase_wall(self):
         g=RollingGrid(8.,.1,inflation=0)
         g.update(np.zeros(3),np.array([[2.,0.,0.]]),1.,0.)
