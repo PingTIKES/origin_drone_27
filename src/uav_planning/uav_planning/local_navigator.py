@@ -22,15 +22,20 @@ class LocalNavigator(Node):
         defaults = dict(uav_id=1, px4_ns='px4_1', map_timeout=.6, pose_timeout=.3,
                         goal_timeout=1., step_distance=.4, planning_budget=.025,
                         max_speed=.6, braking_accel=.8, reaction_time=.3,
-                        height_tolerance=.12, safety_priority_time=2.2)
+                        height_tolerance=.12, safety_priority_time=2.2,
+                        align_enter_deg=15., align_exit_deg=8., align_speed=.15)
         for key, val in defaults.items(): self.declare_parameter(key, val)
         self.p = {k: self.get_parameter(k).value for k in defaults}
+        if not 0 < self.p['align_exit_deg'] < self.p['align_enter_deg'] < 90 or \
+                self.p['align_speed'] < 0:
+            raise ValueError('path alignment thresholds must enforce forward travel')
         self.frame = f'uav{self.p["uav_id"]}_local_nwu'
         self.pose = self.goal = self.safety_goal = self.map = None
         self.pose_at = self.goal_at = self.safety_at = self.map_at = -math.inf
         self.reset = None
         self.hold_point = None
         self.previous = None
+        self.aligning = False
         self.state = None
         self.pub = self.create_publisher(Point, 'waypoint', 1)
         self.yaw_pub = self.create_publisher(Float32, 'desired_yaw', 1)
@@ -57,6 +62,7 @@ class LocalNavigator(Node):
         reset = (msg.xy_reset_counter, msg.z_reset_counter, msg.heading_reset_counter)
         if reset != self.reset:
             self.map, self.hold_point, self.goal, self.safety_goal = None, None, None, None
+            self.aligning, self.previous = False, None
             self.reset = reset
         valid = msg.xy_valid and msg.z_valid and msg.v_xy_valid and all(
             math.isfinite(v) for v in (msg.x,msg.y,msg.z,msg.vx,msg.vy,msg.heading))
@@ -76,13 +82,22 @@ class LocalNavigator(Node):
             self.get_logger().info(value)
             self.state = value
 
-    def hold(self, reason):
+    def publish_path(self, path, height):
+        msg = Path()
+        msg.header.frame_id, msg.header.stamp = self.frame, self.get_clock().now().to_msg()
+        for x, y in path:
+            ps = PoseStamped()
+            ps.header = msg.header
+            ps.pose.position.x, ps.pose.position.y, ps.pose.position.z = float(x), float(y), height
+            ps.pose.orientation.w = 1.
+            msg.poses.append(ps)
+        self.path_pub.publish(msg)
+
+    def hold(self, reason, path=()):
         if self.hold_point is None:
             self.hold_point = Point(x=float(self.pose.x), y=float(self.pose.y), z=float(self.pose.z))
         self.pub.publish(self.hold_point)
-        empty = Path()
-        empty.header.frame_id, empty.header.stamp = self.frame, self.get_clock().now().to_msg()
-        self.path_pub.publish(empty)
+        self.publish_path(path, -float(self.pose.z))
         self.status(reason)
 
     def tick(self):
@@ -126,27 +141,34 @@ class LocalNavigator(Node):
         out = bounded_step(start,path,step)
         if not grid.line_free(start,out):
             self.hold('HOLD_CORRIDOR_BLOCKED'); return
-        self.hold_point = None
         if math.dist(start,out) > .05:
-            self.previous = math.atan2(out[1]-start[1],out[0]-start[0])
-            self.yaw_pub.publish(Float32(data=float(-self.previous)))
+            direction = math.atan2(out[1]-start[1],out[0]-start[0])
+            desired_yaw = -direction  # NWU path -> PX4 local NED heading
+            error = (desired_yaw-pose.heading+math.pi)%(2*math.pi)-math.pi
+            if abs(error) > math.radians(self.p['align_enter_deg']):
+                if not self.aligning:
+                    self.hold_point = None
+                    self.previous = direction
+                self.aligning = True
+            self.yaw_pub.publish(Float32(data=float(desired_yaw)))
+            if self.aligning:
+                if abs(error) > math.radians(self.p['align_exit_deg']) or \
+                        math.hypot(pose.vx,pose.vy) > self.p['align_speed']:
+                    self.hold('ALIGNING_PATH', path)
+                    return
+                self.aligning = False
+            self.previous = direction
+        self.hold_point = None
         self.pub.publish(Point(x=float(out[0]), y=float(-out[1]), z=float(goal.z)))
         self.status(('SAFETY_' if safety else '')+status)
-        msg = Path()
-        msg.header.frame_id, msg.header.stamp = self.frame, self.get_clock().now().to_msg()
-        for x,y in path:
-            ps = PoseStamped()
-            ps.header = msg.header
-            ps.pose.position.x, ps.pose.position.y, ps.pose.position.z = float(x),float(y),-float(goal.z)
-            ps.pose.orientation.w = 1.
-            msg.poses.append(ps)
-        self.path_pub.publish(msg)
+        self.publish_path(path, -float(goal.z))
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = LocalNavigator()
     try: rclpy.spin(node)
+    except KeyboardInterrupt: pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok(): rclpy.shutdown()

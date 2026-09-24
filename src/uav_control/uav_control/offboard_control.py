@@ -63,6 +63,7 @@ class OffboardControl(Node):
         self.declare_parameter('auto_takeoff', True)    # 是否自动起飞（仿真默认开）
         self.declare_parameter('reach_tol', 0.25)       # 航点到达容差 m
         self.declare_parameter('waypoint_timeout', 1.0)
+        self.declare_parameter('forward_heading_limit_deg', 20.0)
         self.declare_parameter('pose_timeout', .5)
         self.declare_parameter('require_vio', False)
         self.declare_parameter('target_system', 0)  # 0 preserves SITL instance+1
@@ -76,11 +77,15 @@ class OffboardControl(Node):
         self.auto_takeoff = bool(self.get_parameter('auto_takeoff').value)
         self.reach_tol = float(self.get_parameter('reach_tol').value)
         self.wp_timeout = float(self.get_parameter('waypoint_timeout').value)
+        self.forward_heading_limit = math.radians(float(self.get_parameter('forward_heading_limit_deg').value))
+        if not 0 < self.forward_heading_limit < math.pi/2:
+            raise ValueError('forward heading limit must be below 90 degrees')
         self.pose_timeout = float(self.get_parameter('pose_timeout').value)
         self.require_vio = bool(self.get_parameter('require_vio').value)
         self.pos_at = self.wp_at = self.vio_at = self.yaw_at = -math.inf
         self.vio_ok = False
         self.hold_target = self.desired_yaw = self.yaw_setpoint = self.pose_reset = None
+        self.heading_hold_target = None
         self.takeoff_xy = None
         self.takeoff_reached_since = None
 
@@ -280,8 +285,22 @@ class OffboardControl(Node):
 
         elif self.state == 'MISSION':
             if self.target is not None and 0<=now-self.wp_at<=self.wp_timeout:
-                self._publish_setpoint(*self.target)
+                dx = self.target[0] - self.local_pos.x
+                dy = self.target[1] - self.local_pos.y
+                if math.hypot(dx,dy) > .05 and (
+                        not math.isfinite(self.local_pos.heading) or
+                        abs((math.atan2(dy,dx)-self.local_pos.heading+math.pi)%(2*math.pi)-math.pi)
+                        > self.forward_heading_limit):
+                    # Reject a translation toward the side or rear even if a
+                    # stale waypoint arrives while the navigator is turning.
+                    if self.heading_hold_target is None:
+                        self.heading_hold_target=(self.local_pos.x,self.local_pos.y,self.target[2])
+                    self._publish_setpoint(*self.heading_hold_target)
+                else:
+                    self.heading_hold_target=None
+                    self._publish_setpoint(*self.target)
             else:
+                self.heading_hold_target=None
                 if self.hold_target is None:
                     self.hold_target=(self.local_pos.x,self.local_pos.y,self.local_pos.z)
                 self._publish_setpoint(*self.hold_target)

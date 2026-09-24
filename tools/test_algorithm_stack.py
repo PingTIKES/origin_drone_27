@@ -298,6 +298,32 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(len(n.pub.messages),1)
         self.assertLessEqual(n.pub.messages[0].x,1.401)
 
+    def test_nav_turns_before_moving_toward_goal_behind(self):
+        n=self.nav();n.pose.heading=math.pi;n.tick()
+        self.assertEqual(n.state,'ALIGNING_PATH')
+        self.assertEqual((n.pub.messages[-1].x,n.pub.messages[-1].y),(1.,-1.))
+        self.assertTrue(n.path_pub.messages[-1].poses)
+        self.assertAlmostEqual(n.yaw_pub.messages[-1].data,0.)
+        n.pose.heading=0.;n.tick()
+        self.assertEqual(n.state,'ASTAR')
+        self.assertGreater(n.pub.messages[-1].x,1.)
+
+    def test_nav_brakes_before_new_direction(self):
+        n=self.nav();n.pose.heading=math.pi;n.pose.vx=.4;n.tick()
+        self.assertEqual(n.state,'ALIGNING_PATH')
+        n.pose.heading=0.;n.tick()
+        self.assertEqual(n.state,'ALIGNING_PATH')
+        self.assertEqual(n.pub.messages[-1].x,1.)
+        n.pose.vx=0.;n.tick()
+        self.assertEqual(n.state,'ASTAR')
+        self.assertGreater(n.pub.messages[-1].x,1.)
+
+    def test_alignment_captures_current_hold_position(self):
+        n=self.nav();n.goal=None;n.tick()
+        n.pose.x=1.1;n.pose.heading=math.pi;n.target(Point(2.,-1.,-2.));n.tick()
+        self.assertEqual(n.state,'ALIGNING_PATH')
+        self.assertAlmostEqual(n.pub.messages[-1].x,1.1)
+
     def test_map_stale_holds_fixed(self):
         n=self.nav();n.clock=10.7;n.position(position(10.7));n.target(Point(2.,-1.,-2.));n.tick()
         self.assertEqual(n.state,'HOLD_MAP_STALE')
@@ -321,7 +347,7 @@ class AdapterTests(unittest.TestCase):
         n=self.nav();n.pose.vx=2;n.tick();self.assertEqual(n.state,'HOLD_OVERSPEED')
 
     def test_safety_priority(self):
-        n=self.nav();n.safety(Point(1.,-2.,-2.));n.tick()
+        n=self.nav();n.pose.heading=-math.pi/2;n.safety(Point(1.,-2.,-2.));n.tick()
         self.assertTrue(n.state.startswith('SAFETY_'));self.assertLess(n.pub.messages[-1].y,-1.)
 
     def test_offboard_timeout_fixed_hold(self):
@@ -330,6 +356,18 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(o.pub_setpoint.messages[-1].position,[1.,-1.,-2.])
         p=position(12);p.x=1.1;o._cb_local_pos(p);o._tick()
         self.assertEqual(o.pub_setpoint.messages[-1].position,[1.,-1.,-2.])
+
+    def test_offboard_rejects_side_and_rear_waypoints(self):
+        o=Offboard();o._cb_local_pos(position());o.state='MISSION'
+        o._cb_waypoint(Point(1.,-2.,-2.));o._tick()
+        self.assertEqual(o.pub_setpoint.messages[-1].position,[1.,-1.,-2.])
+        p=position();p.x=1.1;o._cb_local_pos(p);o._tick()
+        self.assertEqual(o.pub_setpoint.messages[-1].position,[1.,-1.,-2.])
+        o._cb_local_pos(position())
+        o._cb_waypoint(Point(0.,-1.,-2.));o._tick()
+        self.assertEqual(o.pub_setpoint.messages[-1].position,[1.,-1.,-2.])
+        o._cb_waypoint(Point(1.4,-1.,-2.));o._tick()
+        self.assertEqual(o.pub_setpoint.messages[-1].position,[1.4,-1.,-2.])
 
     def test_takeoff_requires_stable_altitude(self):
         o=Offboard();o.state='TAKEOFF';o.takeoff_xy=(1.,-1.)
