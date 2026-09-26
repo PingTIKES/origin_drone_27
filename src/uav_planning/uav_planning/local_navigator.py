@@ -29,7 +29,7 @@ class LocalNavigator(Node):
         if not 0 < self.p['align_exit_deg'] < self.p['align_enter_deg'] < 90 or \
                 self.p['align_speed'] < 0:
             raise ValueError('path alignment thresholds must enforce forward travel')
-        self.frame = f'uav{self.p["uav_id"]}_local_nwu'
+        self.frame = f'uav{self.p["uav_id"]}_odom'
         self.pose = self.goal = self.safety_goal = self.map = None
         self.pose_at = self.goal_at = self.safety_at = self.map_at = -math.inf
         self.reset = None

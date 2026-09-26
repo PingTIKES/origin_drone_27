@@ -19,7 +19,7 @@ Gazebo 提供传感器和动力学；定位、避障与控制不读取真值位�
 | `uav_bringup` | 按仿真或真机参数启动算法图、传感器桥和可选 RViz | `sim`、`uav_id`、标定目录、深度来源、驱动话题 | 下列节点与话题 |
 | `uav_localization` + OpenVINS | 双目惯性里程计；转换坐标与时间戳并向 PX4 提交视觉里程计 | `/uavN/cam0/image_raw`、`cam1/image_raw`、`imu0`、实测标定 | `/uavN/odomimu`、`vio_health`、`/px4_N/fmu/in/vehicle_visual_odometry` |
 | `uav_perception` | 真机驱动话题中继、双目软件深度或硬件深度转机体系点云 | 左右目、IMU、可选深度图和 CameraInfo | `/uavN/d435i/depth/image_raw`（软件深度）、`/uavN/obstacles` |
-| `uav_mapping` | 点云生成滚动局部栅格；仿真发布预制场地参考图，并发布估计里程计和机体 TF | `/uavN/obstacles`、PX4 本地位置和姿态、打包的场地先验图 | `/uavN/local_map`、仿真 `/uavN/global_map`、`/uavN/odom`、`/tf` 中 `uavN_local_nwu → uavN` |
+| `uav_mapping` | 点云生成滚动局部栅格；仿真发布预制场地参考图，并发布估计里程计和机体 TF | `/uavN/obstacles`、PX4 本地位置和姿态、打包的场地先验图 | `/uavN/local_map`、仿真 `/uavN/global_map`、`/uavN/odom`、`/tf` 中仿真 `uavN_map → uavN_odom → uavN_base_link`（真机的 `map → odom` 暂为无全局锚点的单位变换） |
 | `uav_planning` | 手动目标转航点；基于新鲜局部地图规划或保持 | `/uavN/goal_pose` 或 `waypoint_in`、`local_map`、PX4 位置 | `/uavN/waypoint`、`navigation_state`、`local_path`、`desired_yaw` |
 | `uav_control` | 收到请求后管理 Offboard、解锁、起飞、航点和降落 | `waypoint`、`vio_health`、PX4 状态、`/uavN/start_mission`、`command` | `/uavN/state`、PX4 `offboard_control_mode`、`trajectory_setpoint`、`vehicle_command` |
 | `uav_swarm`、`uav_msgs` | 四机任务分配、状态和避碰消息；提供接口类型 | `/swarm/command`、`/swarm/uav_state` 等 | 各机 `waypoint_in`、`safety_waypoint` 及 `/swarm/state` |
@@ -100,7 +100,7 @@ ros2 topic hz /tf
 ros2 topic echo --once /uav1/navigation_state
 ```
 
-这些检查命令应分别运行，不要在同一终端等待某个持续 `hz` 命令时继续粘贴后续命令。确认 `vio_health` 持续为 `VALID`、PX4 本地位置有效且已融合视觉、`obstacles`/`local_map`/`tf` 持续更新。RViz Fixed Frame 设为 `uav1_local_nwu`。若显示 `Frame [uav1_local_nwu] does not exist`，先查 PX4 位置和姿态、点云采集时间与 `/clock`，再查 `rolling_mapper` 日志；地图和 TF 由该节点产生。
+这些检查命令应分别运行，不要在同一终端等待某个持续 `hz` 命令时继续粘贴后续命令。确认 `vio_health` 持续为 `VALID`、PX4 本地位置有效且已融合视觉、`obstacles`/`local_map`/`tf` 持续更新。仿真 RViz Fixed Frame 为 `uav1_map`；若显示 frame 不存在，先查 `prior_mapper` 的 PX4 初始位置和姿态，再查 `rolling_mapper` 的里程计 TF。机体 TF 需要 PX4 有效位置与姿态，局部地图还需要新鲜点云。
 
 若 `/tf` 有频率而 `obstacles`、`local_map` 均无频率，先查 `/uav1/d435i/depth/image_raw`。深度也没有频率时，检查双目左右图像及 `software_stereo` 日志；深度有频率但点云没有时，检查 `stereo_depth_node` 日志。双目看到无纹理或极暗场景时可能没有可用视差，节点会拒绝生成虚假的障碍点云。`/uav1/navigation_state=HOLD_MAP_STALE` 表示地图链路不满足导航要求。RViz 的 Fixed Frame 位于左侧 `Displays → Global Options`，而 `TF` 可视化项可以通过 `Add → TF` 增加；Fixed Frame 已设置并不保证地图话题有数据。
 
@@ -112,12 +112,13 @@ ros2 topic echo --once /uav1/navigation_state
 
 ### 在 RViz 对照地图、轨迹与坐标系
 
-仿真启动的 `prior_mapper` 立即发布 `/uav1/global_map`，无需等待相机看到场地。它由当前 RMUC2025 STL 的 1.5–2.5 m 高度层预先生成，0.1 m 栅格覆盖整片场地；场地内空白为该高度层的参考空闲区域，外部为未知。预制栅格采用 Gazebo 世界 ENU 坐标，发布节点利用仿真出生点和 PX4 初始姿态将其对齐到各机的 `uavN_local_nwu`；视觉定位稳定约 2 秒后固定这个显示变换。相机模型安装姿态为零，Gazebo 相机 +X 视线与 x500 机头 +X 一致。RViz 的 TF 中还可查看 `uavN_camera_mount` 和 `uavN_camera_optical`；光学坐标系按 ROS 约定以 +Z 为视线。先验图是**仿真可视化参考**，并不保证飞行安全：STL 变更、实际高度不同、动态障碍、出生点设置变化或定位漂移都会造成偏差。局部规划仍只使用实时 `/uav1/local_map`。场地 STL 更新后，先运行 `RM27_FIELD_MESH=/path/to/rmuc_2025.stl PYTHONNOUSERSITE=1 python3 tools/generate_field_prior.py` 重新生成打包地图，再重建 `uav_mapping`。
+仿真先验地图是标准的 [`rmuc_2025_prior.yaml`](src/uav_mapping/config/rmuc_2025_prior.yaml) 和 [`rmuc_2025_prior.pgm`](src/uav_mapping/config/rmuc_2025_prior.pgm)。它由 RMUC2025 STL 的 1.5–2.5 m 高度层预先栅格化而成，分辨率 0.1 m；黑色是该高度层的占用，白色是场地内部参考空闲区，灰色是未知。`prior_mapper` 读取这两个文件并发布 `/uav1/global_map`（OccupancyGrid）；不需等待相机观测。地图坐标系 `uavN_map` 固定在 Gazebo 世界 ENU，PGM 左下角对应 YAML 的 `origin`。仿真出生点、PX4 初始位置和航向给出显示用 `uavN_map → uavN_odom`，VIO 稳定约 2 秒后固定；`rolling_mapper` 发布 `uavN_odom → uavN_base_link` 和 `/uavN/odom`。`uavN_odom` 是 PX4 本地 NWU，`uavN_base_link` 是机体 FLU。相机光学帧仍为 `uavN_camera_optical`，+Z 指向视线。这个先验地图只供仿真对照，**不参与局部避障或控制**；模型变更、飞行高度差异、动态障碍及 VIO 漂移均可能使其与实际障碍不符。更换 STL 后运行 `RM27_FIELD_MESH=/path/to/rmuc_2025.stl PYTHONNOUSERSITE=1 python3 tools/generate_field_prior.py`，再重建 `uav_mapping`。真机没有该场地的全局定位锚点：`uavN_map → uavN_odom` 暂为单位变换，仅用于统一 TF 树；不发布仿真先验图，也不代表无人机在场地 PGM 中的位置。接入真实全局定位时须移除这个静态发布者，再由定位模块发布校正后的 `map → odom`。真机 RViz 以 `uavN_map` 为 Fixed Frame。RViz 的 `2D Goal Pose` 会以 `map` 帧发布目标，`local_goal` 查询当前 TF 后转换到 `odom`，再发布 PX4 本地 NED 航点；TF 不可用时不会下发目标。
 
-RViz 默认打开 `ObservedLocalMap`、`Px4EstimatedOdom`、`TF` 和 `LocalPath`，默认关闭 `PriorFieldMap`，可单独勾选先验图做对照。排查黑块时，分别打开 `RawLocalHits` 和 `ObstaclePoints`：原始点云是相机报告的位置，`RawLocalHits` 中的 100 是高度带内的原始击中，`ObservedLocalMap` 中额外的 100 是 0.35 m 安全膨胀。两张局部图只输出 0 和 100：100=点云占用及其膨胀，0=没有保留的障碍击中；0 不代表相机证明该区域安全。先验 `/uav1/global_map` 仍是独立参考图，保留它自己的未知区，不参与导航。低飞时若点云在机体下方约 0.25 m 的高度带内出现成片水平面，地面也会成为占用格；先核对飞行高度、相机外参与深度质量。Fixed Frame 为 `uav1_local_nwu`，TF 树应出现 `uav1_local_nwu → uav1`。`/uav1/odom` 是 PX4 的估计里程计，**不是**独立真值；若 VIO 发散，里程计相对先验图也会偏移。检查 TF 可单独运行：
+仿真 RViz 默认打开 `PriorFieldMap`、`ObservedLocalMap`、`Px4EstimatedOdom`、`TF` 和 `LocalPath`，可单独取消勾选先验图只看实时局部图。排查黑块时，分别打开 `RawLocalHits` 和 `ObstaclePoints`：原始点云是相机报告的位置，`RawLocalHits` 中的 100 是高度带内的原始击中，`ObservedLocalMap` 中额外的 100 是 0.35 m 安全膨胀。两张局部图只输出 0 和 100：100=点云占用及其膨胀，0=没有保留的障碍击中；0 不代表相机证明该区域安全。先验 `/uav1/global_map` 仍是独立参考图，保留它自己的未知区，不参与导航。低飞时若点云在机体下方约 0.25 m 的高度带内出现成片水平面，地面也会成为占用格；先核对飞行高度、相机外参与深度质量。仿真 Fixed Frame 为 `uav1_map`，TF 树应出现 `uav1_map → uav1_odom → uav1_base_link`。`/uav1/odom` 是 PX4 的估计里程计，**不是**独立真值；若 VIO 发散，里程计相对先验图也会偏移。检查 TF 可单独运行：
 
 ```bash
-ros2 run tf2_ros tf2_echo uav1_local_nwu uav1
+ros2 run tf2_ros tf2_echo uav1_map uav1_odom
+ros2 run tf2_ros tf2_echo uav1_odom uav1_base_link
 ```
 
 在确认 VIO 稳定、PX4 已融合视觉、点云与局部地图持续更新后，再在仿真中测试目标导航；若出现 `HOLD_MAP_STALE`、里程计跳变或视觉失效，停止任务并保存录包，不把积累图当作继续飞行的依据。
@@ -135,7 +136,7 @@ ros2 topic echo /uav1/state
 
 ```bash
 ros2 topic pub --once /uav1/goal_pose geometry_msgs/msg/PoseStamped \
-  "{header: {frame_id: 'uav1_local_nwu'}, pose: {position: {x: 2.0, y: 0.0}, orientation: {w: 1.0}}}"
+  "{header: {frame_id: 'uav1_odom'}, pose: {position: {x: 2.0, y: 0.0}, orientation: {w: 1.0}}}"
 ros2 topic echo /uav1/navigation_state
 ros2 topic pub --once /uav1/command std_msgs/msg/String "{data: land}"
 ```
@@ -232,7 +233,7 @@ ros2 topic hz /tf
 ros2 topic echo --once /uav1/state
 ```
 
-每条 `hz` 命令应分别运行，前三个驱动话题按实际配置替换。硬件深度还要检查深度图和 CameraInfo 的类型、帧率与时间戳。`/uav1/obstacles` 没有数据时，沿“深度图 → CameraInfo → `stereo_depth_node`”排查；`/tf` 缺失时，检查 PX4 本地位置和姿态、点云时间戳及 `rolling_mapper` 日志。RViz Fixed Frame 为 `uav1_local_nwu`。飞控控制台查 `listener vehicle_visual_odometry`、`listener estimator_status`，再用 ULog 核对 EV 融合和创新；**收到视觉消息不等于 EKF2 已融合**。起飞前还要确认本地位置有效、`vio_health` 稳定为 `VALID`、地图持续更新、遥控接管可用。
+每条 `hz` 命令应分别运行，前三个驱动话题按实际配置替换。硬件深度还要检查深度图和 CameraInfo 的类型、帧率与时间戳。`/uav1/obstacles` 没有数据时，沿“深度图 → CameraInfo → `stereo_depth_node`”排查；`/tf` 缺失时，检查 PX4 本地位置和姿态、点云时间戳及 `rolling_mapper` 日志。真机 RViz Fixed Frame 为 `uav1_map`，TF 应有 `uav1_map → uav1_odom → uav1_base_link`；第一段只是无全局锚点的单位变换，真机不加载仿真先验地图。飞控控制台查 `listener vehicle_visual_odometry`、`listener estimator_status`，再用 ULog 核对 EV 融合和创新；**收到视觉消息不等于 EKF2 已融合**。起飞前还要确认本地位置有效、`vio_health` 稳定为 `VALID`、地图持续更新、遥控接管可用。
 
 ### 5. 受控飞行与停止
 

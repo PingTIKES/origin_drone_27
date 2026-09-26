@@ -24,8 +24,8 @@ class RollingMapper(Node):
                         cam_xyz=[.17, .025, -.06])
         for key, val in defaults.items(): self.declare_parameter(key, val)
         p = lambda key: self.get_parameter(key).value
-        self.frame = f'uav{p("uav_id")}_local_nwu'
-        self.body_frame = f'uav{p("uav_id")}'
+        self.frame = f'uav{p("uav_id")}_odom'
+        self.body_frame = f'uav{p("uav_id")}_base_link'
         self.grid = RollingGrid(p('size'), p('resolution'), p('memory'), p('inflation'))
         self.height, self.slop = p('half_height'), p('pose_slop')
         self.max_age, self.max_rays = p('max_cloud_age'), p('max_rays')

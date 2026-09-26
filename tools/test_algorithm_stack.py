@@ -326,7 +326,7 @@ def load_ros_classes():
 Navigator,Offboard,Bridge=load_ros_classes()
 def position(t=10.):return S(x=1.,y=-1.,z=-2.,vx=0.,vy=0.,heading=0.,xy_valid=True,z_valid=True,v_xy_valid=True,
                             xy_reset_counter=0,z_reset_counter=0,heading_reset_counter=0,timestamp=int(t*1e6))
-def map_message():return S(header=S(frame_id='uav1_local_nwu',stamp=S(sec=10,nanosec=0)),
+def map_message():return S(header=S(frame_id='uav1_odom',stamp=S(sec=10,nanosec=0)),
                          info=S(width=40,height=40,resolution=.1,origin=S(position=Point(0,0,2.))),data=[0]*1600)
 
 

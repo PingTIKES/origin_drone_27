@@ -4,8 +4,8 @@ D435i 深度图 → 机体坐标系障碍点云（即框架文档里的 stereo_d
 订阅  d435i/depth/image_raw（→/uavN/d435i/depth/image_raw）
       sensor_msgs/Image，32FC1 浮点深度，单位米
 发布  obstacles（→/uavN/obstacles）sensor_msgs/PointCloud2
-      坐标系 = 机体 FLU（x 前、y 左、z 上），frame_id = uavN，
-      与 rolling_mapper 的 uavN_local_nwu->uavN TF 配合可在 RViz 显示
+      坐标系 = 机体 FLU（x 前、y 左、z 上），frame_id = uavN_base_link，
+      与 rolling_mapper 的 uavN_odom->uavN_base_link TF 配合可在 RViz 显示
 
 仿真/实机同一份代码：
   仿真：start_sim_4uav.sh 的 D435i 模型深度相机（640x480@15，hfov 1.5184 rad）
@@ -35,7 +35,7 @@ class StereoDepthNode(Node):
         super().__init__('stereo_depth_node')
 
         # ---- 参数 ----
-        self.declare_parameter('uav_id', 1)        # frame_id = uavN
+        self.declare_parameter('uav_id', 1)        # frame_id = uavN_base_link
         # 深度相机内参（默认 = worlds/models/d435i/model.sdf 的 depth 传感器：
         # 640x480, hfov 1.5184 rad → fx=fy≈337.2, 主点取中心）
         self.declare_parameter('fx', 337.2)
@@ -56,7 +56,7 @@ class StereoDepthNode(Node):
         self.declare_parameter('self_mask_model', 'none')  # 仅仿真 x500 可选；真机须实测机架
 
         uid = int(self.get_parameter('uav_id').value)
-        self.frame_id = f'uav{uid}'
+        self.frame_id = f'uav{uid}_base_link'
         self.fx = float(self.get_parameter('fx').value)
         self.fy = float(self.get_parameter('fy').value)
         self.cx = float(self.get_parameter('cx').value)

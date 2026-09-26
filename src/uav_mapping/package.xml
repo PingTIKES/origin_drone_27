@@ -4,6 +4,7 @@
   <description>Depth-based local mapping and simulation field prior visualization</description>
   <maintainer email="team@example.com">rm27-uav</maintainer><license>MIT</license>
   <exec_depend>rclpy</exec_depend><exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-pil</exec_depend><exec_depend>python3-yaml</exec_depend>
   <exec_depend>ament_index_python</exec_depend><exec_depend>std_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend><exec_depend>sensor_msgs_py</exec_depend>
   <exec_depend>nav_msgs</exec_depend><exec_depend>px4_msgs</exec_depend>

@@ -119,7 +119,7 @@ def setup(context):
     nodes.append(Node(package='tf2_ros',executable='static_transform_publisher',
                       name=f'{ns}_camera_mount_tf',arguments=[
                           '--x',str(float(mount[0])),'--y',str(float(mount[1])),
-                          '--z',str(float(mount[2])),'--frame-id',ns,
+                          '--z',str(float(mount[2])),'--frame-id',f'{ns}_base_link',
                           '--child-frame-id',f'{ns}_camera_mount']))
     camera_q=quaternion(t_bc[:3,:3])
     nodes.append(Node(package='tf2_ros',executable='static_transform_publisher',
@@ -128,9 +128,15 @@ def setup(context):
                           '--z',str(float(t_bc[2,3])),
                           '--qx',str(float(camera_q[1])),'--qy',str(float(camera_q[2])),
                           '--qz',str(float(camera_q[3])),'--qw',str(float(camera_q[0])),
-                          '--frame-id',ns,'--child-frame-id',f'{ns}_camera_optical']))
+                          '--frame-id',f'{ns}_base_link','--child-frame-id',f'{ns}_camera_optical']))
     if sim:
         nodes.append(node('uav_mapping','prior_mapper','prior_mapper',{'uav_id':uid}))
+    else:
+        # Until a real global localizer exists, map is the PX4 odom origin.
+        # This identity transform does not align the vehicle to any field map.
+        nodes.append(Node(package='tf2_ros',executable='static_transform_publisher',
+                          name=f'{ns}_unanchored_map_tf',arguments=[
+                              '--frame-id',f'{ns}_map','--child-frame-id',f'{ns}_odom']))
     nodes.append(node('uav_planning','local_navigator','local_navigator',
                       {'uav_id':uid,'px4_ns':f'px4_{uid}',
                        'safety_priority_time':.35 if swarm else 2.2}))
@@ -148,7 +154,11 @@ def setup(context):
     if arg('rviz').lower()=='true':
         template=Path(get_package_share_directory('uav_bringup'))/'config/algorithm.rviz'
         view=work/'algorithm.rviz'
-        view.write_text(template.read_text(encoding='utf-8').replace('uav1',ns),encoding='utf-8')
+        view_text=template.read_text(encoding='utf-8').replace('uav1',ns)
+        if not sim:
+            view_text=view_text.replace('Name: PriorFieldMap\n      Enabled: true',
+                                        'Name: PriorFieldMap\n      Enabled: false')
+        view.write_text(view_text,encoding='utf-8')
         nodes.append(Node(package='rviz2',executable='rviz2',name=f'{ns}_rviz',
                           parameters=[common],arguments=['-d',str(view)]))
     return nodes
