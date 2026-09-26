@@ -15,3 +15,7 @@ rolling_mapper:
 prior_mapper:
   ros__parameters:
     uav_id: null
+map_odom:
+  ros__parameters:
+    uav_id: null
+    sim: null

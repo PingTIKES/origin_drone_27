@@ -6,8 +6,11 @@ openvins:
     publish_calibration_tf: false
 vio_to_px4:
   ros__parameters:
+    uav_id: null
     px4_ns: null
     t_body_imu: null
+    tf_pose_slop: 0.15
+    tf_alignment_wait: 1.0
     max_age: 0.25
     max_position_variance: 1.0
     max_orientation_variance: 0.25

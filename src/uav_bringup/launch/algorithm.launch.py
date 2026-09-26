@@ -91,7 +91,7 @@ def setup(context):
                       {'config_path':config,'publish_global_to_imu_tf':False,'publish_calibration_tf':False},
                       param_package='uav_localization'))
     nodes.append(node('uav_localization','vio_to_px4.py','vio_to_px4',
-                      {'px4_ns':f'px4_{uid}','t_body_imu':t_bi.ravel().tolist()}))
+                      {'uav_id':uid,'px4_ns':f'px4_{uid}','t_body_imu':t_bi.ravel().tolist()}))
     if mode=='software':
         matcher=StereoMatcher(config,t_bi)
         t_bc=matcher.body_optical
@@ -129,14 +129,9 @@ def setup(context):
                           '--qx',str(float(camera_q[1])),'--qy',str(float(camera_q[2])),
                           '--qz',str(float(camera_q[3])),'--qw',str(float(camera_q[0])),
                           '--frame-id',f'{ns}_base_link','--child-frame-id',f'{ns}_camera_optical']))
+    nodes.append(node('uav_mapping','map_odom','map_odom',{'uav_id':uid,'sim':sim}))
     if sim:
         nodes.append(node('uav_mapping','prior_mapper','prior_mapper',{'uav_id':uid}))
-    else:
-        # Until a real global localizer exists, map is the PX4 odom origin.
-        # This identity transform does not align the vehicle to any field map.
-        nodes.append(Node(package='tf2_ros',executable='static_transform_publisher',
-                          name=f'{ns}_unanchored_map_tf',arguments=[
-                              '--frame-id',f'{ns}_map','--child-frame-id',f'{ns}_odom']))
     nodes.append(node('uav_planning','local_navigator','local_navigator',
                       {'uav_id':uid,'px4_ns':f'px4_{uid}',
                        'safety_priority_time':.35 if swarm else 2.2}))

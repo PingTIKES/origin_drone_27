@@ -1,6 +1,8 @@
 """Fixed Gazebo ENU map alignment with PX4's local NWU odometry."""
 import math
 
+SPAWN_ENU = ((1.3, 9.4), (-1.3, 9.4), (1.3, 11.6), (-1.3, 11.6))
+
 
 def map_to_odom(spawn, position):
     """Gazebo east/north = -PX4 NWU west/north, anchored at spawn."""

@@ -17,6 +17,7 @@ class LocalGoal(Node):
         self.map_frame=f'uav{uid}_map'
         self.alt=float(self.get_parameter('cruise_alt').value)
         self.goal=None
+        self.resolved_goal=None
         self.tf_buffer=Buffer()
         self.tf_listener=TransformListener(self.tf_buffer,self)
         self.pub=self.create_publisher(Point,'waypoint_in',1)
@@ -29,21 +30,26 @@ class LocalGoal(Node):
                 math.isfinite(v) for v in (p.x,p.y)):
             return
         self.goal=msg
+        self.resolved_goal=None
 
     def tick(self):
         if self.goal is None:return
-        p=self.goal.pose.position
-        x,y=float(p.x),float(p.y)
-        if self.goal.header.frame_id==self.map_frame:
-            try:
-                tf=self.tf_buffer.lookup_transform(self.frame,self.map_frame,Time())
-            except TransformException:
-                return
-            q=tf.transform.rotation
-            yaw=math.atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z))
-            c,s=math.cos(yaw),math.sin(yaw)
-            x,y=tf.transform.translation.x+c*x-s*y,tf.transform.translation.y+s*x+c*y
-        self.pub.publish(Point(x=x,y=-y,z=-self.alt))
+        if self.resolved_goal is None:
+            p=self.goal.pose.position
+            x,y=float(p.x),float(p.y)
+            if self.goal.header.frame_id==self.map_frame:
+                try:
+                    tf=self.tf_buffer.lookup_transform(self.frame,self.map_frame,Time())
+                except TransformException:
+                    return
+                q=tf.transform.rotation
+                yaw=math.atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z))
+                c,s=math.cos(yaw),math.sin(yaw)
+                x,y=tf.transform.translation.x+c*x-s*y,tf.transform.translation.y+s*x+c*y
+            # Freeze each map goal in local odom at receipt. A manual map
+            # alignment change must not redirect an already active flight.
+            self.resolved_goal=Point(x=x,y=-y,z=-self.alt)
+        self.pub.publish(self.resolved_goal)
 
 
 def main(args=None):

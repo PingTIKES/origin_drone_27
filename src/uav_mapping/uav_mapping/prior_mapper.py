@@ -1,22 +1,15 @@
-"""Publish a PGM/YAML simulation prior and its map -> odom display transform."""
-import math
+"""Publish the prebuilt simulation PGM/YAML prior map."""
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
-from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import OccupancyGrid
 from PIL import Image
-from px4_msgs.msg import VehicleLocalPosition
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
-from tf2_ros import TransformBroadcaster
-from uav_mapping.map_alignment import SpawnAlignment
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from uav_mapping.map_alignment import SPAWN_ENU
 import numpy as np
 import yaml
-
-
-SPAWN_ENU = ((1.3, 9.4), (-1.3, 9.4), (1.3, 11.6), (-1.3, 11.6))
 
 
 def load_prior(path):
@@ -46,8 +39,6 @@ class PriorMapper(Node):
             raise ValueError('uav_id must be 1..4')
         path = Path(get_package_share_directory('uav_mapping')) / 'config/rmuc_2025_prior.yaml'
         prior, values = load_prior(path)
-        spawn_x, spawn_y = SPAWN_ENU[uid - 1]
-        self.alignment = SpawnAlignment((spawn_x, spawn_y))
         self.map = OccupancyGrid()
         self.map.header.frame_id = f'uav{uid}_map'
         self.map.info.width = prior['width']
@@ -60,33 +51,12 @@ class PriorMapper(Node):
         qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                          reliability=ReliabilityPolicy.RELIABLE)
         self.pub = self.create_publisher(OccupancyGrid, 'global_map', qos)
-        self.tf_pub = TransformBroadcaster(self)
-        self.odom_frame = f'uav{uid}_odom'
-        self.create_subscription(VehicleLocalPosition, f'/px4_{uid}/fmu/out/vehicle_local_position',
-                                 self.on_position, qos_profile_sensor_data)
         self.create_timer(1., self.publish_map)
         self.get_logger().info(f'Loaded field prior: {path} ({self.map.info.width}x{self.map.info.height})')
-
-    def on_position(self, msg):
-        if self.alignment.transform is not None: return
-        if msg.xy_valid and all(math.isfinite(v) for v in (msg.x, msg.y)):
-            self.alignment.latch((msg.x, -msg.y))
-            self.get_logger().info('Simulation map -> odom fixed at spawn with ENU/NWU axes')
 
     def publish_map(self):
         self.map.header.stamp = self.get_clock().now().to_msg()
         self.pub.publish(self.map)
-        if self.alignment.transform is not None:
-            x, y, yaw = self.alignment.transform
-            tf = TransformStamped()
-            tf.header.stamp = self.map.header.stamp
-            tf.header.frame_id = self.map.header.frame_id
-            tf.child_frame_id = self.odom_frame
-            tf.transform.translation.x = x
-            tf.transform.translation.y = y
-            tf.transform.rotation.z = math.sin(yaw/2)
-            tf.transform.rotation.w = math.cos(yaw/2)
-            self.tf_pub.sendTransform(tf)
 
 
 def main(args=None):

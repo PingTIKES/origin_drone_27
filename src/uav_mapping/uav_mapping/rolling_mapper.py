@@ -1,4 +1,7 @@
-"""Depth cloud + timestamped PX4 pose -> rolling local NWU occupancy grid."""
+"""Depth cloud + timestamped PX4 pose -> rolling local NWU occupancy grid.
+
+PX4 gets its own comparison TF; OpenVINS owns odom -> base_link.
+"""
 from collections import deque
 import time
 import numpy as np
@@ -26,6 +29,7 @@ class RollingMapper(Node):
         p = lambda key: self.get_parameter(key).value
         self.frame = f'uav{p("uav_id")}_odom'
         self.body_frame = f'uav{p("uav_id")}_base_link'
+        self.px4_body_frame = f'uav{p("uav_id")}_px4_base_link'
         self.grid = RollingGrid(p('size'), p('resolution'), p('memory'), p('inflation'))
         self.height, self.slop = p('half_height'), p('pose_slop')
         self.max_age, self.max_rays = p('max_cloud_age'), p('max_rays')
@@ -40,7 +44,7 @@ class RollingMapper(Node):
         self.create_subscription(PointCloud2, 'obstacles', self.cloud, qos_profile_sensor_data)
         self.pub = self.create_publisher(OccupancyGrid, 'local_map', 1)
         self.raw_pub = self.create_publisher(OccupancyGrid, 'local_map_raw', 1)
-        self.odom_pub = self.create_publisher(Odometry, 'odom', 10)
+        self.odom_pub = self.create_publisher(Odometry, 'px4_odom', 10)
         self.tf_pub = TransformBroadcaster(self)
 
     def now(self): return self.get_clock().now().nanoseconds * 1e-9
@@ -60,7 +64,7 @@ class RollingMapper(Node):
                     tf = TransformStamped()
                     tf.header.stamp = self.get_clock().now().to_msg()
                     tf.header.frame_id = self.frame
-                    tf.child_frame_id = self.body_frame
+                    tf.child_frame_id = self.px4_body_frame
                     tf.transform.translation.x = float(msg.x)
                     tf.transform.translation.y = float(-msg.y)
                     tf.transform.translation.z = float(-msg.z)
@@ -71,7 +75,7 @@ class RollingMapper(Node):
                     self.tf_pub.sendTransform(tf)
                     odom = Odometry()
                     odom.header = tf.header
-                    odom.child_frame_id = self.body_frame
+                    odom.child_frame_id = self.px4_body_frame
                     odom.pose.pose.position.x = tf.transform.translation.x
                     odom.pose.pose.position.y = tf.transform.translation.y
                     odom.pose.pose.position.z = tf.transform.translation.z

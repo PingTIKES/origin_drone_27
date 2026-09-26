@@ -27,6 +27,7 @@ from uav_planning.local_grid_planner import LocalGridPlanner,bounded_step
 from uav_perception.depth_geometry import decode_depth
 from uav_perception.self_mask import x500_external_mask
 from uav_localization.vio_geometry import rotation,quaternion,convert
+from uav_localization.vio_tf_geometry import VioOdomAlignment, vio_body_pose, px4_body_pose
 from uav_localization.calibration import validate_config, read_yaml, write_opencv_yaml
 from uav_perception.stereo_matcher import StereoMatcher
 from uav_swarm.avoidance import (local_to_common,common_to_local,closest_approach,
@@ -34,6 +35,19 @@ from uav_swarm.avoidance import (local_to_common,common_to_local,closest_approac
 
 
 class GeometryTests(unittest.TestCase):
+    def test_vio_tf_alignment_preserves_motion_after_initial_pose_match(self):
+        initial_vio=(np.array([1.,2.,3.]),np.eye(3))
+        initial_px4=(np.array([4.,5.,6.]),np.eye(3))
+        alignment=VioOdomAlignment()
+        alignment.latch(initial_vio,initial_px4)
+        point,quat=alignment.transform((np.array([1.5,2.,3.]),np.eye(3)))
+        np.testing.assert_allclose(point,[4.5,5.,6.])
+        np.testing.assert_allclose(quat,[1.,0.,0.,0.])
+        alignment.latch((np.zeros(3),np.eye(3)),(np.zeros(3),np.eye(3)))
+        np.testing.assert_allclose(alignment.transform(initial_vio)[0],initial_px4[0])
+        np.testing.assert_allclose(vio_body_pose([1.,-2.,-3.],[1.,0.,0.,0.])[0],[1.,2.,3.])
+        np.testing.assert_allclose(px4_body_pose([1.,-2.,-3.],[1.,0.,0.,0.])[0],[1.,2.,3.])
+
     def test_spawn_alignment_does_not_cancel_later_vehicle_motion(self):
         spawn=(1.3,9.4)
         initial=(2.,-1.)
@@ -324,20 +338,22 @@ class FakeNode:
 
 
 def load_ros_classes():
-    modules={name:types.ModuleType(name) for name in ('rclpy','rclpy.node','rclpy.qos','geometry_msgs','geometry_msgs.msg','nav_msgs','nav_msgs.msg','std_msgs','std_msgs.msg','std_srvs','std_srvs.srv','px4_msgs','px4_msgs.msg','sensor_msgs','sensor_msgs.msg')}
+    modules={name:types.ModuleType(name) for name in ('rclpy','rclpy.node','rclpy.qos','geometry_msgs','geometry_msgs.msg','nav_msgs','nav_msgs.msg','std_msgs','std_msgs.msg','std_srvs','std_srvs.srv','px4_msgs','px4_msgs.msg','sensor_msgs','sensor_msgs.msg','tf2_ros')}
     modules['rclpy.node'].Node=FakeNode
     modules['rclpy.qos'].qos_profile_sensor_data=object()
     modules['rclpy.qos'].QoSProfile=lambda **kwargs:None
     for name in ('QoSReliabilityPolicy','QoSDurabilityPolicy','QoSHistoryPolicy'):
         setattr(modules['rclpy.qos'],name,S(BEST_EFFORT=0,VOLATILE=0,KEEP_LAST=0))
     for name,typ in [('Point',Point),('PoseStamped',PoseStamped)]:setattr(modules['geometry_msgs.msg'],name,typ)
+    modules['geometry_msgs.msg'].TransformStamped=S
+    modules['tf2_ros'].TransformBroadcaster=lambda node:S(sendTransform=lambda msg:None)
     for name,typ in [('Path',PathMsg),('OccupancyGrid',S),('Odometry',S)]:setattr(modules['nav_msgs.msg'],name,typ)
     for name in ('String','Float32'):setattr(modules['std_msgs.msg'],name,S)
     modules['std_srvs.srv'].Trigger=S
     modules['sensor_msgs.msg'].Image=S
     class Odom(S):POSE_FRAME_FRD=2;VELOCITY_FRAME_BODY_FRD=3
     modules['px4_msgs.msg'].VehicleOdometry=Odom
-    for name in ('VehicleLocalPosition','VehicleStatus','VehicleCommand','OffboardControlMode','TrajectorySetpoint'):
+    for name in ('VehicleLocalPosition','VehicleAttitude','VehicleStatus','VehicleCommand','OffboardControlMode','TrajectorySetpoint'):
         setattr(modules['px4_msgs.msg'],name,S)
     with patch.dict(sys.modules,modules):
         from uav_planning.local_navigator import LocalNavigator
@@ -626,6 +642,7 @@ class AdapterTests(unittest.TestCase):
             with patch.object(module.tempfile,'mkdtemp',return_value=directory):nodes=module.setup(context)
             names=[n.executable for n in nodes]
             self.assertIn('software_stereo',names);self.assertIn('vio_to_px4.py',names)
+            self.assertIn('map_odom',names)
             depth_node=next(n for n in nodes if n.executable=='stereo_depth_node')
             self.assertFalse(depth_node.parameters[1]['require_camera_info'])
             self.assertGreater(depth_node.parameters[1]['fx'],0)

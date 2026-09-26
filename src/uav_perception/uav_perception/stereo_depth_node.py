@@ -5,7 +5,7 @@ D435i 深度图 → 机体坐标系障碍点云（即框架文档里的 stereo_d
       sensor_msgs/Image，32FC1 浮点深度，单位米
 发布  obstacles（→/uavN/obstacles）sensor_msgs/PointCloud2
       坐标系 = 机体 FLU（x 前、y 左、z 上），frame_id = uavN_base_link，
-      与 rolling_mapper 的 uavN_odom->uavN_base_link TF 配合可在 RViz 显示
+      与受检验的 OpenVINS uavN_odom->uavN_base_link TF 配合可在 RViz 显示
 
 仿真/实机同一份代码：
   仿真：start_sim_4uav.sh 的 D435i 模型深度相机（640x480@15，hfov 1.5184 rad）

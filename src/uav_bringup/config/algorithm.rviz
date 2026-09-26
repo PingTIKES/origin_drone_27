@@ -1,6 +1,9 @@
 Panels:
   - Class: rviz_common/Displays
     Name: Displays
+  - Class: uav_rviz_plugins/MapOdomPanel
+    Name: MapOdom
+    Namespace: /uav1
 Visualization Manager:
   Class: ""
   Global Options:
@@ -59,7 +62,7 @@ Visualization Manager:
         Color: 255; 100; 20
         Alpha: 1
       Topic:
-        Value: /uav1/odom
+        Value: /uav1/px4_odom
         Durability Policy: Volatile
         Reliability Policy: Reliable
         Depth: 10
