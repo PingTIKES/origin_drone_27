@@ -1,6 +1,9 @@
 {
-  "source": "rmuc_2025.stl",
-  "source_sha256": "cb73b46fe01de83308f05430e895d6d963215a78fbfc5b7e320218f064514556",
+  "source": "rmuc_2025_3m.stl",
+  "source_sha256": "f2cd3ed13481413a9dc6df15f58dc281483144d34f0a749c5b2d65280e447d16",
+  "world": "rmuc_2025_3m_vio_columns.sdf",
+  "world_sha256": "9bc0a85ab816a67dfcf112a33808a092fdd9bf19943cd12c57df7d782c0d7e29",
+  "vio_columns": 6,
   "layer_m": [
     1.5,
     2.5

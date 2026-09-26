@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rasterize the pinned RMUC STL into a 2 m flight-layer reference map.
+"""Rasterize the 3 m RMUC STL and VIO columns into a 2 m prior map.
 
 This is a simulation reference for RViz, not an input to navigation/control.
 Coordinates are Gazebo world ENU after the +90 degree SDF model rotation.
@@ -9,12 +9,14 @@ import json
 import os
 from pathlib import Path
 import struct
+import xml.etree.ElementTree as ET
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = Path(__file__).resolve().parents[1]
 MESH = Path(os.environ.get('RM27_FIELD_MESH', ROOT / 'worlds/models/rmuc_2025/meshes/rmuc_2025.stl'))
+WORLD = ROOT / 'worlds/rmuc_2025_3m_vio_columns.sdf'
 OUT = ROOT / 'src/uav_mapping/config/rmuc_2025_prior.pgm'
 RES = .1
 ORIGIN = (-10., -16.)
@@ -32,6 +34,37 @@ def clip_z(poly, threshold, keep_above):
             fraction = (threshold - a[2]) / (b[2] - a[2])
             out.append(a + fraction * (b - a))
     return out
+
+
+def add_vio_columns(draw):
+    """Mark collision boxes intersecting the prior's flight-height band."""
+    root = ET.parse(WORLD).getroot()
+    count = 0
+    for model in root.findall('./world/model'):
+        if not model.get('name', '').startswith('vio_column_'):
+            continue
+        model_pose = [float(v) for v in model.findtext('pose', '0 0 0 0 0 0').split()]
+        for link in model.findall('link'):
+            link_pose = [float(v) for v in link.findtext('pose', '0 0 0 0 0 0').split()]
+            for collision in link.findall('collision'):
+                box = collision.findtext('geometry/box/size')
+                if box is None:
+                    raise ValueError(f"{model.get('name')} must use a box collision")
+                sx, sy, sz = [float(v) for v in box.split()]
+                cp = [float(v) for v in collision.findtext('pose', '0 0 0 0 0 0').split()]
+                if any(abs(v) > 1e-8 for v in (model_pose[3], model_pose[4], model_pose[5],
+                                                link_pose[3], link_pose[4], link_pose[5],
+                                                cp[3], cp[4], cp[5])):
+                    raise ValueError('rotated VIO column collision requires polygon rasterization')
+                x, y, z = (model_pose[i] + link_pose[i] + cp[i] for i in range(3))
+                if z + sz/2 < Z_MIN or z - sz/2 > Z_MAX:
+                    continue
+                draw.rectangle([((x-sx/2-ORIGIN[0])/RES, (y-sy/2-ORIGIN[1])/RES),
+                                ((x+sx/2-ORIGIN[0])/RES, (y+sy/2-ORIGIN[1])/RES)], fill=255)
+                count += 1
+    if count == 0:
+        raise ValueError('no VIO columns intersect the prior flight-height band')
+    return count
 
 
 def main():
@@ -59,6 +92,7 @@ def main():
         xy = [((-v[1] - ORIGIN[0]) / RES, (v[0] - ORIGIN[1]) / RES) for v in poly]
         if len(xy) >= 3: draw.polygon(xy, fill=255)
         else: draw.line(xy, fill=255, width=1)
+    columns = add_vio_columns(draw)
     # Slightly thicken sub-cell mesh walls for a legible reference image.
     layer = layer.filter(ImageFilter.MaxFilter(3))
     occupied = np.asarray(layer) > 0
@@ -79,8 +113,10 @@ def main():
         f'image: {OUT.name}\nresolution: {RES}\norigin: [{ORIGIN[0]}, {ORIGIN[1]}, 0.0]\n'
         'negate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.196\nmode: trinary\n',
         encoding='utf-8')
-    metadata = dict(source='rmuc_2025.stl', source_sha256=hashlib.sha256(MESH.read_bytes()).hexdigest(),
-                    layer_m=[Z_MIN, Z_MAX], frame='world_enu', resolution=RES, origin=list(ORIGIN))
+    metadata = dict(source='rmuc_2025_3m.stl', source_sha256=hashlib.sha256(MESH.read_bytes()).hexdigest(),
+                    world=WORLD.name, world_sha256=hashlib.sha256(WORLD.read_bytes()).hexdigest(),
+                    vio_columns=columns, layer_m=[Z_MIN, Z_MAX], frame='world_enu',
+                    resolution=RES, origin=list(ORIGIN))
     OUT.with_suffix('.metadata.json').write_text(json.dumps(metadata, indent=2) + '\n', encoding='utf-8')
     print(f'{OUT}: free={np.sum(grid == 0)}, occupied={np.sum(grid == 100)}, unknown={np.sum(grid == -1)}')
 

@@ -3,7 +3,10 @@
 ROS adapters use message/node stubs: this is NOT a ROS integration test.
 """
 from pathlib import Path
+import hashlib
 import importlib.util
+import json
+import lzma
 import math
 import sys
 import tempfile
@@ -13,6 +16,7 @@ import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 import numpy as np
+from PIL import Image
 
 ROOT=Path(__file__).resolve().parents[1]
 for pkg in ('uav_mapping','uav_planning','uav_localization','uav_perception','uav_control','uav_swarm'):
@@ -519,6 +523,23 @@ class AdapterTests(unittest.TestCase):
         coordinator=(ROOT/'src/uav_swarm/uav_swarm/swarm_coordinator.py').read_text()
         self.assertNotIn('output_mode',coordinator)
         self.assertNotIn('field_map',coordinator)
+
+    def test_default_world_prior_matches_3m_mesh_and_columns(self):
+        startup=(ROOT/'scripts/start_sim_4uav.sh').read_text()
+        self.assertIn('WORLD="${PX4_WORLD:-rmuc_2025_3m_vio_columns}"',startup)
+        world=ROOT/'worlds/rmuc_2025_3m_vio_columns.sdf'
+        metadata=json.loads((ROOT/'src/uav_mapping/config/rmuc_2025_prior.metadata.json').read_text())
+        self.assertEqual(hashlib.sha256(world.read_bytes()).hexdigest(),metadata['world_sha256'])
+        mesh=lzma.decompress((ROOT/'worlds/models/rmuc_2025/meshes/rmuc_2025_3m.stl.xz').read_bytes())
+        self.assertEqual(hashlib.sha256(mesh).hexdigest(),metadata['source_sha256'])
+        models=ET.parse(world).getroot().findall('./world/model')
+        columns=[m for m in models if m.get('name','').startswith('vio_column_')]
+        self.assertEqual(len(columns),metadata['vio_columns'])
+        grid=np.flipud(np.asarray(Image.open(ROOT/'src/uav_mapping/config/rmuc_2025_prior.pgm')))
+        ox,oy=metadata['origin'];res=metadata['resolution']
+        for model in columns:
+            x,y=map(float,model.findtext('pose').split()[:2])
+            self.assertEqual(grid[int((y-oy)/res),int((x-ox)/res)],0,model.get('name'))
 
     def test_package_xml(self):
         for path in (ROOT/'src').glob('*/package.xml'):ET.parse(path)

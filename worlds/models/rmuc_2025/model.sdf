@@ -1,8 +1,6 @@
 <?xml version='1.0'?>
-<!-- RMUC2025 全场网格模型（来源：SMBU-PolarBear rmu_gazebo_simulator）
-     原始 link pose 为 "14.5 8 0.2 0 0 0"，其 x/y 偏移用于配合他们
-     自己的出生点配置；网格实际已按场地中心建模（x ±14.58, y ±8.08，
-     地板 z=-0.2），故此处只保留 z=0.2 抬升，使地板落在 z=0。 -->
+<!-- 用户提供的短墙 RMUC2025 网格；启动时解压 rmuc_2025_3m.stl.xz。
+     网格按场地中心建模，地板 z=-0.2，link 抬升 0.2 m。 -->
 <sdf version='1.6'>
   <model name='rmuc_2025'>
     <static>true</static>

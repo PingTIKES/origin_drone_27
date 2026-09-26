@@ -8,7 +8,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PX4_DIR="${PX4_DIR:-$HOME/PX4-Autopilot-1.14.3}"
 PX4_COMMIT=08310a5e8ac64d02edb41523460e7dc267298deb
 PX4_BIN="$PX4_DIR/build/px4_sitl_default/bin/px4"
-WORLD="${PX4_WORLD:-rmuc_2025_field}"
+WORLD="${PX4_WORLD:-rmuc_2025_3m_vio_columns}"
+if [[ "$WORLD" == rmuc_2025_field ]]; then
+    echo '[sim] Obsolete world name rmuc_2025_field; using the 3 m VIO-column world.' >&2
+    WORLD=rmuc_2025_3m_vio_columns
+fi
 AUTOSTART=4001
 SPAWN_POSES=("1.3,9.4,0.5,0,0,0" "-1.3,9.4,0.5,0,0,0" "1.3,11.6,0.5,0,0,0" "-1.3,11.6,0.5,0,0,0")
 
@@ -26,8 +30,9 @@ else
     WORLD_SRC="$ROOT_DIR/worlds/$WORLD.sdf"
     WORLD_SDF="$PX4_DIR/Tools/simulation/gz/worlds/$WORLD.sdf"
     [[ -f "$WORLD_SRC" ]] || { echo "World missing: $WORLD_SRC" >&2; exit 1; }
-    if [[ "$WORLD" == rmuc_2025_field && ! -s "$ROOT_DIR/worlds/models/rmuc_2025/meshes/rmuc_2025.stl" ]]; then
-        "$ROOT_DIR/scripts/fetch_field_model.sh"
+    if [[ "$WORLD" == rmuc_2025_3m_vio_columns ]]; then
+        "$ROOT_DIR/scripts/prepare_field_model.sh"
+        PYTHONNOUSERSITE=1 python3 "$ROOT_DIR/tools/generate_field_prior.py"
     fi
     cp -f "$WORLD_SRC" "$WORLD_SDF"
 fi
