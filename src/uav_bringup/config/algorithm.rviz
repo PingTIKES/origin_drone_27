@@ -22,7 +22,7 @@ Visualization Manager:
         Depth: 1
     - Class: rviz_default_plugins/Map
       Name: ObservedLocalMap
-      Enabled: true
+      Enabled: false
       Alpha: 0.85
       Topic:
         Value: /uav1/local_map
@@ -50,7 +50,7 @@ Visualization Manager:
       Size (Pixels): 2
     - Class: rviz_default_plugins/Odometry
       Name: Px4EstimatedOdom
-      Enabled: true
+      Enabled: false
       Keep: 1
       Position Tolerance: 0.1
       Angle Tolerance: 0.1
@@ -67,12 +67,15 @@ Visualization Manager:
       Name: TF
       Enabled: true
       Frame Timeout: 15
-      Marker Scale: 0.35
+      Marker Scale: 2
+      Update Interval: 0
       Show Arrows: true
       Show Axes: true
       Show Names: true
       Frames:
-        All Enabled: true
+        All Enabled: false
+        uav1_base_link:
+          Value: true
     - Class: rviz_default_plugins/Path
       Name: LocalPath
       Enabled: true
