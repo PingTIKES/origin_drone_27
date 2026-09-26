@@ -22,6 +22,7 @@ ROOT=Path(__file__).resolve().parents[1]
 for pkg in ('uav_mapping','uav_planning','uav_localization','uav_perception','uav_control','uav_swarm'):
     sys.path.insert(0,str(ROOT/'src'/pkg))
 from uav_mapping.rolling_grid import RollingGrid,body_to_nwu,body_quaternion_to_nwu
+from uav_mapping.map_alignment import SpawnAlignment
 from uav_planning.local_grid_planner import LocalGridPlanner,bounded_step
 from uav_perception.depth_geometry import decode_depth
 from uav_perception.self_mask import x500_external_mask
@@ -33,6 +34,20 @@ from uav_swarm.avoidance import (local_to_common,common_to_local,closest_approac
 
 
 class GeometryTests(unittest.TestCase):
+    def test_spawn_alignment_does_not_cancel_later_vehicle_motion(self):
+        spawn=(1.3,9.4)
+        initial=(2.,-1.)
+        alignment=SpawnAlignment(spawn)
+        tx,ty,theta=alignment.latch(initial,.4)
+        def in_map(position):
+            x,y=position
+            return (tx+math.cos(theta)*x-math.sin(theta)*y,
+                    ty+math.sin(theta)*x+math.cos(theta)*y)
+        np.testing.assert_allclose(in_map(initial),spawn)
+        moved=(initial[0]+.5,initial[1])
+        self.assertEqual(alignment.latch(moved,.7),(tx,ty,theta))
+        self.assertAlmostEqual(np.linalg.norm(np.array(in_map(moved))-spawn),.5)
+
     def test_x500_self_mask_keeps_external_obstacles(self):
         points=np.array([[0.,0.,0.], [.174,.174,.06],
                          [.33,.174,.06], [.5,0.,0.], [.19,0.,0.],

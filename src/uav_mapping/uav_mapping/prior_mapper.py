@@ -10,9 +10,9 @@ from px4_msgs.msg import VehicleAttitude, VehicleLocalPosition
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
-from std_msgs.msg import String
 from tf2_ros import TransformBroadcaster
 from uav_mapping.rolling_grid import body_to_nwu
+from uav_mapping.map_alignment import SpawnAlignment
 import numpy as np
 import yaml
 
@@ -38,13 +38,6 @@ def load_prior(path):
     return prior, values.ravel().tolist()
 
 
-def map_to_odom(spawn, position, yaw):
-    """Invert world->local alignment using the known simulation spawn pose."""
-    c, s = math.cos(yaw), math.sin(yaw)
-    x, y = position
-    return (spawn[0] - c*x - s*y, spawn[1] + s*x - c*y, -yaw)
-
-
 class PriorMapper(Node):
     def __init__(self):
         super().__init__('prior_mapper')
@@ -55,12 +48,9 @@ class PriorMapper(Node):
         path = Path(get_package_share_directory('uav_mapping')) / 'config/rmuc_2025_prior.yaml'
         prior, values = load_prior(path)
         spawn_x, spawn_y = SPAWN_ENU[uid - 1]
-        self.spawn = (spawn_x, spawn_y)
-        self.yaw = 0.
-        self.position = (0., 0.)
-        self.has_attitude = self.has_position = False
-        self.valid_since = None
-        self.frozen = False
+        self.alignment = SpawnAlignment((spawn_x, spawn_y))
+        self.yaw = self.position = None
+        self.attitude_stamp = self.position_stamp = None
         self.map = OccupancyGrid()
         self.map.header.frame_id = f'uav{uid}_map'
         self.map.info.width = prior['width']
@@ -79,43 +69,38 @@ class PriorMapper(Node):
                                  self.on_attitude, qos_profile_sensor_data)
         self.create_subscription(VehicleLocalPosition, f'/px4_{uid}/fmu/out/vehicle_local_position',
                                  self.on_position, qos_profile_sensor_data)
-        self.create_subscription(String, 'vio_health', self.on_health, 1)
         self.create_timer(1., self.publish_map)
         self.get_logger().info(f'Loaded field prior: {path} ({self.map.info.width}x{self.map.info.height})')
 
     def on_attitude(self, msg):
-        if self.frozen: return
+        if self.alignment.transform is not None: return
         try:
             rotation = body_to_nwu(msg.q)
         except ValueError:
             return
         self.yaw = math.atan2(rotation[1, 0], rotation[0, 0])
-        self.has_attitude = True
+        self.attitude_stamp = msg.timestamp
+        self.maybe_anchor()
 
     def on_position(self, msg):
-        if self.frozen: return
+        if self.alignment.transform is not None: return
         if msg.xy_valid and all(math.isfinite(v) for v in (msg.x, msg.y)):
             self.position = (msg.x, -msg.y)
-            self.has_position = True
+            self.position_stamp = msg.timestamp
+            self.maybe_anchor()
 
-    def on_health(self, msg):
-        if self.frozen: return
-        now = self.get_clock().now().nanoseconds * 1e-9
-        if msg.data != 'VALID':
-            self.valid_since = None
-        elif not (self.has_position and self.has_attitude):
-            self.valid_since = None
-        elif self.valid_since is None:
-            self.valid_since = now
-        elif now - self.valid_since >= 2.:
-            self.frozen = True
-            self.get_logger().info('Simulation map -> odom alignment frozen')
+    def maybe_anchor(self):
+        if (self.position is not None and self.yaw is not None
+                and self.position_stamp is not None and self.attitude_stamp is not None
+                and abs(self.position_stamp - self.attitude_stamp) <= 150_000):
+            self.alignment.latch(self.position, self.yaw)
+            self.get_logger().info('Simulation map -> odom alignment fixed at initial PX4 pose')
 
     def publish_map(self):
         self.map.header.stamp = self.get_clock().now().to_msg()
         self.pub.publish(self.map)
-        if self.has_position and self.has_attitude:
-            x, y, yaw = map_to_odom(self.spawn, self.position, self.yaw)
+        if self.alignment.transform is not None:
+            x, y, yaw = self.alignment.transform
             tf = TransformStamped()
             tf.header.stamp = self.map.header.stamp
             tf.header.frame_id = self.map.header.frame_id

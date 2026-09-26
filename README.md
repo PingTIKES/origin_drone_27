@@ -112,14 +112,17 @@ ros2 topic echo --once /uav1/navigation_state
 
 ### 在 RViz 对照地图、轨迹与坐标系
 
-仿真先验地图是标准的 [`rmuc_2025_prior.yaml`](src/uav_mapping/config/rmuc_2025_prior.yaml) 和 [`rmuc_2025_prior.pgm`](src/uav_mapping/config/rmuc_2025_prior.pgm)。它由 3 m 围墙 STL 与 6 根识别柱碰撞轮廓的 1.5–2.5 m 高度层预先栅格化而成，分辨率 0.1 m；黑色是该高度层的占用，白色是场地内部参考空闲区，灰色是未知。`prior_mapper` 读取这两个文件并发布 `/uav1/global_map`（OccupancyGrid）；不需等待相机观测。地图坐标系 `uavN_map` 固定在 Gazebo 世界 ENU，PGM 左下角对应 YAML 的 `origin`。仿真出生点、PX4 初始位置和航向给出显示用 `uavN_map → uavN_odom`，VIO 稳定约 2 秒后固定；`rolling_mapper` 发布 `uavN_odom → uavN_base_link` 和 `/uavN/odom`。`uavN_odom` 是 PX4 本地 NWU，`uavN_base_link` 是机体 FLU。相机光学帧仍为 `uavN_camera_optical`，+Z 指向视线。这个先验地图只供仿真对照，**不参与局部避障或控制**；模型变更、飞行高度差异、动态障碍及 VIO 漂移均可能使其与实际障碍不符。默认仿真每次启动都会从当前 3 m STL 与柱子 SDF 刷新 PGM；如手动修改模型，运行 `PYTHONNOUSERSITE=1 python3 tools/generate_field_prior.py` 并重建 `uav_mapping`（使用 `--symlink-install` 时安装地图随源文件更新）。先验图元数据记录 STL 与 SDF 的 SHA-256，便于核对 Gazebo 与 RViz 使用的是同一场地。真机没有该场地的全局定位锚点：`uavN_map → uavN_odom` 暂为单位变换，仅用于统一 TF 树；不发布仿真先验图，也不代表无人机在场地 PGM 中的位置。接入真实全局定位时须移除这个静态发布者，再由定位模块发布校正后的 `map → odom`。真机 RViz 以 `uavN_map` 为 Fixed Frame。RViz 的 `2D Goal Pose` 会以 `map` 帧发布目标，`local_goal` 查询当前 TF 后转换到 `odom`，再发布 PX4 本地 NED 航点；TF 不可用时不会下发目标。
+仿真先验地图是标准的 [`rmuc_2025_prior.yaml`](src/uav_mapping/config/rmuc_2025_prior.yaml) 和 [`rmuc_2025_prior.pgm`](src/uav_mapping/config/rmuc_2025_prior.pgm)。它由 3 m 围墙 STL 与 6 根识别柱碰撞轮廓的 1.5–2.5 m 高度层预先栅格化而成，分辨率 0.1 m；黑色是该高度层的占用，白色是场地内部参考空闲区，灰色是未知。`prior_mapper` 读取这两个文件并发布 `/uav1/global_map`（OccupancyGrid）；不需等待相机观测。地图坐标系 `uavN_map` 固定在 Gazebo 世界 ENU，PGM 左下角对应 YAML 的 `origin`。仿真出生点与首次时间戳相近的有效 PX4 位置、姿态确定显示用 `uavN_map → uavN_odom`，随后保持固定，不再用飞行中的位置重算；`rolling_mapper` 发布 `uavN_odom → uavN_base_link` 和 `/uavN/odom`。`uavN_odom` 是 PX4 本地 NWU，`uavN_base_link` 是机体 FLU。相机光学帧仍为 `uavN_camera_optical`，+Z 指向视线。这个先验地图只供仿真对照，**不参与局部避障或控制**；模型变更、飞行高度差异、动态障碍及 VIO 漂移均可能使其与实际障碍不符。默认仿真每次启动都会从当前 3 m STL 与柱子 SDF 刷新 PGM；如手动修改模型，运行 `PYTHONNOUSERSITE=1 python3 tools/generate_field_prior.py` 并重建 `uav_mapping`（使用 `--symlink-install` 时安装地图随源文件更新）。先验图元数据记录 STL 与 SDF 的 SHA-256，便于核对 Gazebo 与 RViz 使用的是同一场地。真机没有该场地的全局定位锚点：`uavN_map → uavN_odom` 暂为单位变换，仅用于统一 TF 树；不发布仿真先验图，也不代表无人机在场地 PGM 中的位置。接入真实全局定位时须移除这个静态发布者，再由定位模块发布校正后的 `map → odom`。真机 RViz 以 `uavN_map` 为 Fixed Frame。RViz 的 `2D Goal Pose` 会以 `map` 帧发布目标，`local_goal` 查询当前 TF 后转换到 `odom`，再发布 PX4 本地 NED 航点；TF 不可用时不会下发目标。
 
-仿真 RViz 默认打开 `PriorFieldMap`、`ObservedLocalMap`、`Px4EstimatedOdom`、`TF` 和 `LocalPath`，可单独取消勾选先验图只看实时局部图。排查黑块时，分别打开 `RawLocalHits` 和 `ObstaclePoints`：原始点云是相机报告的位置，`RawLocalHits` 中的 100 是高度带内的原始击中，`ObservedLocalMap` 中额外的 100 是 0.35 m 安全膨胀。两张局部图只输出 0 和 100：100=点云占用及其膨胀，0=没有保留的障碍击中；0 不代表相机证明该区域安全。先验 `/uav1/global_map` 仍是独立参考图，保留它自己的未知区，不参与导航。低飞时若点云在机体下方约 0.25 m 的高度带内出现成片水平面，地面也会成为占用格；先核对飞行高度、相机外参与深度质量。仿真 Fixed Frame 为 `uav1_map`，TF 树应出现 `uav1_map → uav1_odom → uav1_base_link`。`/uav1/odom` 是 PX4 的估计里程计，**不是**独立真值；若 VIO 发散，里程计相对先验图也会偏移。检查 TF 可单独运行：
+仿真 RViz 默认打开 `PriorFieldMap`、`TF`（只显示 `uavN_base_link`）和 `LocalPath`；`ObservedLocalMap`、`Px4EstimatedOdom`、`RawLocalHits` 和 `ObstaclePoints` 默认关闭，可在排查时单独打开。排查黑块时，分别打开 `RawLocalHits` 和 `ObstaclePoints`：原始点云是相机报告的位置，`RawLocalHits` 中的 100 是高度带内的原始击中，`ObservedLocalMap` 中额外的 100 是 0.35 m 安全膨胀。两张局部图只输出 0 和 100：100=点云占用及其膨胀，0=没有保留的障碍击中；0 不代表相机证明该区域安全。先验 `/uav1/global_map` 仍是独立参考图，保留它自己的未知区，不参与导航。低飞时若点云在机体下方约 0.25 m 的高度带内出现成片水平面，地面也会成为占用格；先核对飞行高度、相机外参与深度质量。仿真 Fixed Frame 为 `uav1_map`，TF 树应出现 `uav1_map → uav1_odom → uav1_base_link`。`/uav1/odom` 是 PX4 的估计里程计，**不是**独立真值；若 VIO 发散，里程计相对先验图也会偏移。检查 TF 可单独运行：
 
 ```bash
 ros2 run tf2_ros tf2_echo uav1_map uav1_odom
 ros2 run tf2_ros tf2_echo uav1_odom uav1_base_link
+ros2 run tf2_ros tf2_echo uav1_map uav1_base_link
 ```
+
+`map → odom` 在启动时固定后，上述第一条变换应保持不变，机体移动时后两条应变化。若 Gazebo 中机体移动而后两条不变，检查 PX4 本地位置和 VIO；此 TF 来自 PX4 估计，不是 Gazebo 真值。
 
 在确认 VIO 稳定、PX4 已融合视觉、点云与局部地图持续更新后，再在仿真中测试目标导航；若出现 `HOLD_MAP_STALE`、里程计跳变或视觉失效，停止任务并保存录包，不把积累图当作继续飞行的依据。
 
