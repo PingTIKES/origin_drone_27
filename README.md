@@ -143,6 +143,52 @@ ros2 topic pub --once /uav1/command std_msgs/msg/String "{data: land}"
 
 确认降落和 PX4 上锁后停止算法及仿真终端。四机启动、时钟桥和任务指令见 [四机仿真说明](SWARM_SIMULATION.md)。
 
+### VIO 跳变恢复与任务暂停
+
+VIO 桥检测到位置突跳后进入有界隔离，`vio_health` 为 `INVALID`，控制器进入
+`VIO_HOLD`。仅在 PX4 本地位置仍有效、新鲜时，控制器持续发送 Offboard 心跳并
+保持进入隔离时的位置与朝向；规划器清除旧目标，不继续沿旧路径飞行。
+桥接器不发布伪造位置，也不把 PX4 已融合的位置反馈作为新的独立视觉观测。
+
+默认要求候选 VIO 连续稳定 0.5 s，相邻候选与速度预测的残差不超过 0.03 m，
+候选间隔不超过 0.1 s，位置相对最后正常状态的匀速预测偏差不超过 0.75 m、
+姿态偏差不超过 20°，恢复总等待上限为 2 s。这些检查只能约束不连续性，不能
+证明绝对位置准确。恢复时递增 PX4 EV `reset_counter`，控制器用 PX4 的
+`delta_xy`、`delta_z`、`delta_heading` 同步调整悬停目标，避免追赶坐标重置前的目标。
+缺失的重置增量、失效的 PX4 位置、持续超时仍进入 `FAULT`。
+
+VIO 连续健康 1 s 后，控制器进入 `RECOVERY_HOLD`，继续悬停。确认定位与地图后，
+使用原服务恢复，再重新在 RViz 打点；暂停期间输入的目标会丢弃：
+
+```bash
+ros2 topic echo /uav1/vio_diagnostics
+ros2 topic echo /uav1/state
+# 上面两条分别在独立终端运行；恢复命令：
+ros2 service call /uav1/start_mission std_srvs/srv/Trigger '{}'
+```
+
+桥接恢复参数在 `src/uav_localization/config/params.yaml`，控制器的
+`vio_hold_timeout`（默认 3.5 s）和 `vio_resume_stable_time`（默认 1 s）在
+`src/uav_control/config/params.yaml`。调整时须给桥接隔离与控制器稳定等待留出时间。
+真机目前没有独立定位备份，持续 VIO 丢失后不能保证长时间定点留空；保留 PX4
+定位失效处理，独立传感器接入之前不宣称具有冗余定位。
+
+仿真相机仍为 30 Hz，OpenVINS `track_frequency` 改为 40 Hz 的接收上限：
+Gazebo 的 32/36 ms 帧间隔会被原先严格的 30 Hz 限流丢弃一部分。对本次 3226 帧
+录包按 OpenVINS 源码规则计算，30 上限接收 1871 帧（17.57 Hz），40 上限接收
+全部帧（30.30 Hz）；这不等于已经证明 OpenVINS 所有跳变都已消除。
+
+可离线回放桥接回调，命令不会发布 ROS 数据或控制飞行器：
+
+```bash
+PYTHONNOUSERSITE=1 python3 tools/replay_vio_recovery.py \
+  ~/origin_drone_27/flight_bags/vio_fault_20260926_193536
+```
+
+复现录包建议额外包含 `/uav1/vio_diagnostics`、
+`/px4_1/fmu/in/offboard_control_mode` 和 `/px4_1/fmu/in/trajectory_setpoint`，
+以核对隔离期间的心跳及悬停目标。离线回放无法替代 PX4/Gazebo 闭环飞行验证。
+
 ## 二、真机流程：每架分别执行
 
 真机示例为 `uav1`；其他飞机要同时替换机号、`MAV_SYS_ID`、`px4_N` 命名空间和各自标定文件。先在拆桨台架完成配置与检查，再进行受控低速飞行验收。机载板执行：

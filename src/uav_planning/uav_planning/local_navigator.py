@@ -37,11 +37,13 @@ class LocalNavigator(Node):
         self.previous = None
         self.aligning = False
         self.state = None
+        self.control_paused = False
         self.pub = self.create_publisher(Point, 'waypoint', 1)
         self.yaw_pub = self.create_publisher(Float32, 'desired_yaw', 1)
         self.state_pub = self.create_publisher(String, 'navigation_state', 1)
         self.path_pub = self.create_publisher(Path, 'local_path', 1)
         self.create_subscription(Point, 'waypoint_in', self.target, 1)
+        self.create_subscription(String, 'state', self.control_state, 1)
         self.create_subscription(Point, 'safety_waypoint', self.safety, 1)
         self.create_subscription(OccupancyGrid, 'local_map', self.grid, 1)
         self.create_subscription(VehicleLocalPosition,
@@ -51,12 +53,20 @@ class LocalNavigator(Node):
     def now(self): return self.get_clock().now().nanoseconds*1e-9
 
     def target(self, msg):
+        if self.control_paused: return
         if all(math.isfinite(v) for v in (msg.x,msg.y,msg.z)):
             self.goal, self.goal_at = msg, self.now()
 
     def safety(self, msg):
+        if self.control_paused: return
         if all(math.isfinite(v) for v in (msg.x,msg.y,msg.z)):
             self.safety_goal, self.safety_at = msg, self.now()
+
+    def control_state(self, msg):
+        self.control_paused = msg.data in ('VIO_HOLD','RECOVERY_HOLD','FAULT')
+        if self.control_paused:
+            self.goal = self.safety_goal = self.hold_point = self.previous = None
+            self.aligning = False
 
     def position(self, msg):
         reset = (msg.xy_reset_counter, msg.z_reset_counter, msg.heading_reset_counter)
@@ -101,6 +111,10 @@ class LocalNavigator(Node):
         self.status(reason)
 
     def tick(self):
+        if self.control_paused:
+            self.status('HOLD_VIO_RECOVERY')
+            self.publish_path([], 0.)
+            return
         now = self.now()
         if self.pose is None or not 0 <= now-self.pose_at <= self.p['pose_timeout']:
             self.hold_point = None

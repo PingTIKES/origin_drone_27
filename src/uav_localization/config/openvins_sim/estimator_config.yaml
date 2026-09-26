@@ -96,7 +96,10 @@ grid_x: 5 # extraction sub-grid count for horizontal direction (uniform tracking
 grid_y: 5 # extraction sub-grid count for vertical direction (uniform tracking)
 min_px_dist: 10 # distance between features (features near each other provide less information)
 knn_ratio: 0.70 # descriptor knn threshold for the top two descriptor matches
-track_frequency: 30.0 # frequency we will perform feature tracking at（相机 30Hz 全收）
+# Gazebo 250 Hz physics quantizes 30 Hz frames to 32/36 ms. OpenVINS uses
+# a strict 1/f interval and a 30 limit drops 32 ms frames (~17.6 Hz effective).
+# 40 is an input admission ceiling, not a change to the camera's 30 Hz rate.
+track_frequency: 40.0
 downsample_cameras: false # will downsample image in half if true
 num_opencv_threads: 4 # -1: auto, 0-1: serial, >1: number of threads
 histogram_method: "CLAHE" # NONE, HISTOGRAM, CLAHE（场地纹理偏少，CLAHE 提升低对比区域提点）

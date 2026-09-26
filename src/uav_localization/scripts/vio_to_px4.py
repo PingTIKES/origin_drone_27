@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Guarded OpenVINS odomimu -> PX4 external vision. No ground-truth input."""
 import math
+import json
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -12,6 +13,7 @@ from std_srvs.srv import Trigger
 from px4_msgs.msg import VehicleOdometry
 from uav_localization.vio_geometry import convert
 from uav_localization.calibration import transform
+from uav_localization.vio_recovery import VioRecovery
 
 
 class VioBridge(Node):
@@ -20,15 +22,21 @@ class VioBridge(Node):
         for k,v in dict(px4_ns='px4_1',max_age=.25,max_position_variance=1.,
                         max_orientation_variance=.25,max_velocity_variance=1.,
                         max_speed=4.,max_jump=.4,expected_world='global',expected_imu='imu',
+                        recovery_stable_time=.5,recovery_timeout=2.,recovery_max_correction=.75,
+                        recovery_max_angle_deg=20.,recovery_sample_gap=.1,recovery_residual=.03,
                         t_body_imu=np.eye(4).ravel().tolist()).items(): self.declare_parameter(k,v)
         self.p = lambda k: self.get_parameter(k).value
         self.extrinsic = transform(np.array(self.p('t_body_imu')).reshape(4,4))
         self.last_stamp = self.last_position = None
+        self.last_quat = self.last_velocity = None
+        self.recovery = self.new_recovery()
+        self.reason = 'WAITING_FOR_DATA'
         self.reset_count, self.latched = 0, False
         self.last_good = -math.inf
         self.image_at = [-math.inf,-math.inf]
         self.pub = self.create_publisher(VehicleOdometry,f'/{self.p("px4_ns")}/fmu/in/vehicle_visual_odometry',qos_profile_sensor_data)
         self.health = self.create_publisher(String,'vio_health',1)
+        self.diagnostics = self.create_publisher(String,'vio_diagnostics',1)
         self.create_subscription(Odometry,'odomimu',self.callback,qos_profile_sensor_data)
         for i in range(2):
             self.create_subscription(Image,f'cam{i}/image_raw',lambda msg,index=i:self.image(msg,index),qos_profile_sensor_data)
@@ -37,45 +45,85 @@ class VioBridge(Node):
 
     def now(self): return self.get_clock().now().nanoseconds*1e-9
 
+    def new_recovery(self):
+        return VioRecovery(*(float(self.p(k)) for k in (
+            'recovery_stable_time','recovery_timeout','recovery_max_correction',
+            'recovery_max_angle_deg','recovery_sample_gap','recovery_residual')))
+
     def image(self,msg,index):
         self.image_at[index]=msg.header.stamp.sec+msg.header.stamp.nanosec*1e-9
 
     def reset(self,request,response):
         self.last_stamp = self.last_position = None
+        self.last_quat = self.last_velocity = None
+        self.recovery = self.new_recovery()
         self.reset_count = (self.reset_count+1)%256
         self.latched = False
+        self.reason = 'MANUAL_RESET'
         self.last_good = -math.inf
         response.success, response.message = True,'Reset acknowledged; awaiting fresh VIO. Re-arm separately.'
         return response
 
     def watchdog(self):
-        healthy = not self.latched and all(0 <= self.now()-t <= self.p('max_age') for t in [self.last_good]+self.image_at)
+        now = self.now()
+        if self.recovery.expired(now):
+            self.latched, self.reason = True, 'RECOVERY_TIMEOUT'
+        if self.recovery.active and not all(0 <= now-t <= self.p('max_age') for t in self.image_at):
+            self.recovery.previous = self.recovery.stable_since = None
+        healthy = not self.latched and not self.recovery.active and all(0 <= now-t <= self.p('max_age') for t in [self.last_good]+self.image_at)
         self.health.publish(String(data='VALID' if healthy else 'INVALID'))
+        self.diagnostics.publish(String(data=json.dumps(dict(
+            state='LATCHED' if self.latched else ('RECOVERING' if self.recovery.active else ('VALID' if healthy else 'STALE')),
+            reason=self.reason, reset_counter=self.reset_count,
+            age=None if not math.isfinite(self.last_good) else round(now-self.last_good,4)))))
+
+    def reject(self, reason):
+        self.reason = reason
+        if self.recovery.active:
+            self.recovery.previous = self.recovery.stable_since = None
 
     def callback(self,msg):
         stamp = msg.header.stamp.sec+msg.header.stamp.nanosec*1e-9
         now = self.now()
-        if self.latched or not 0 <= now-stamp <= self.p('max_age'): return
-        if not all(0<=now-t<=self.p('max_age') for t in self.image_at):return
-        if msg.header.frame_id != self.p('expected_world') or msg.child_frame_id != self.p('expected_imu'): return
+        if self.latched: return
+        if not 0 <= now-stamp <= self.p('max_age'):
+            self.reject('ODOMETRY_STALE'); return
+        if not all(0<=now-t<=self.p('max_age') for t in self.image_at):
+            self.reject('IMAGES_STALE'); return
+        if msg.header.frame_id != self.p('expected_world') or msg.child_frame_id != self.p('expected_imu'):
+            self.reject('FRAME_MISMATCH'); return
         if self.last_stamp is not None and stamp <= self.last_stamp:
-            if stamp < self.last_stamp: self.latched = True
+            if stamp < self.last_stamp: self.latched, self.reason = True, 'STAMP_REGRESSION'
             return
         p,q,v,w = msg.pose.pose.position,msg.pose.pose.orientation,msg.twist.twist.linear,msg.twist.twist.angular
         try:
             result = convert([p.x,p.y,p.z],[q.w,q.x,q.y,q.z],np.array([v.x,v.y,v.z]),np.array([w.x,w.y,w.z]),
                              msg.pose.covariance,msg.twist.covariance,self.extrinsic)
-        except ValueError: return
-        if not all(np.isfinite(x).all() for x in result): return
+        except ValueError:
+            self.reject('INVALID_COVARIANCE_OR_POSE'); return
+        if not all(np.isfinite(x).all() for x in result):
+            self.reject('NONFINITE_DATA'); return
         pos,quat,vel,omega,pv,ov,vv = result
-        if np.linalg.norm(vel)>self.p('max_speed'):return
-        if max(pv)>self.p('max_position_variance') or max(ov)>self.p('max_orientation_variance') or max(vv)>self.p('max_velocity_variance'): return
-        if self.last_stamp is not None:
+        if np.linalg.norm(vel)>self.p('max_speed'):
+            self.reject('EXCESSIVE_SPEED'); return
+        if max(pv)>self.p('max_position_variance') or max(ov)>self.p('max_orientation_variance') or max(vv)>self.p('max_velocity_variance'):
+            self.reject('EXCESSIVE_VARIANCE'); return
+        if self.last_stamp is not None and not self.recovery.active:
             dt = stamp-self.last_stamp
-            if dt > 1. or np.linalg.norm(pos-self.last_position)>self.p('max_jump')+self.p('max_speed')*dt:
-                self.latched = True
-                self.get_logger().error('VIO discontinuity; bridge latched until reset_vio_bridge')
-                return
+            angle=2*math.acos(float(np.clip(abs(np.dot(quat,self.last_quat)),0.,1.)))
+            if dt > 1. or np.linalg.norm(pos-self.last_position)>self.p('max_jump')+self.p('max_speed')*dt or angle>math.radians(self.p('recovery_max_angle_deg')):
+                self.recovery.begin(now,self.last_stamp,self.last_position,self.last_quat,self.last_velocity)
+                self.reason = 'DATA_GAP' if dt>1. else ('ORIENTATION_DISCONTINUITY' if angle>math.radians(self.p('recovery_max_angle_deg')) else 'POSITION_DISCONTINUITY')
+                self.health.publish(String(data='INVALID'))
+                self.get_logger().warn(f'VIO quarantine: {self.reason}; dt={dt:.4f}s jump={np.linalg.norm(pos-self.last_position):.3f}m')
+        if self.recovery.active:
+            if not self.recovery.accept(now,stamp,pos,quat,vel): return
+            # Explicitly inform EKF2 of the accepted discontinuity. Its reset
+            # deltas must be handled by the controller; never conceal a shift.
+            self.reset_count = (self.reset_count+1)%256
+            self.recovery = self.new_recovery()
+            self.reason = 'RECOVERED_WITH_RESET'
+            self.get_logger().info('VIO stable again; publishing EV reset_counter')
         out = VehicleOdometry()
         # Hardware uses XRCE clock conversion. Algorithm SITL uses /clock on
         # both sides via the PX4-side RM27_SIM_CLOCK patch; do not offset twice.
@@ -87,6 +135,7 @@ class VioBridge(Node):
         out.reset_counter,out.quality = self.reset_count,100
         self.pub.publish(out)
         self.last_stamp,self.last_position,self.last_good = stamp,pos,stamp
+        self.last_quat,self.last_velocity = quat,vel
 
 
 def main(args=None):

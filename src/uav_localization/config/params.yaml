@@ -14,6 +14,14 @@ vio_to_px4:
     max_velocity_variance: 1.0
     max_speed: 4.0
     max_jump: 0.4
+    # Quarantine a discontinuity; resume real measurements only after a stable
+    # sequence inside the prediction envelope. Persistent failure stays latched.
+    recovery_stable_time: 0.5
+    recovery_timeout: 2.0
+    recovery_max_correction: 0.75
+    recovery_max_angle_deg: 20.0
+    recovery_sample_gap: 0.1
+    recovery_residual: 0.03
     expected_world: global
     expected_imu: imu
 compare_vio_gt:

@@ -67,6 +67,8 @@ class OffboardControl(Node):
         self.declare_parameter('max_yaw_rate_deg_s', 45.0)
         self.declare_parameter('pose_timeout', .5)
         self.declare_parameter('require_vio', False)
+        self.declare_parameter('vio_hold_timeout', 3.5)
+        self.declare_parameter('vio_resume_stable_time', 1.0)
         self.declare_parameter('target_system', 0)  # 0 preserves SITL instance+1
 
         self.px4_ns = self.get_parameter('px4_ns').value
@@ -86,6 +88,15 @@ class OffboardControl(Node):
             raise ValueError('max_yaw_rate_deg_s must be between 0 and 360')
         self.pose_timeout = float(self.get_parameter('pose_timeout').value)
         self.require_vio = bool(self.get_parameter('require_vio').value)
+        self.vio_hold_timeout = float(self.get_parameter('vio_hold_timeout').value)
+        self.vio_resume_stable_time = float(self.get_parameter('vio_resume_stable_time').value)
+        if not all(math.isfinite(v) and v > 0 for v in (self.vio_hold_timeout,self.vio_resume_stable_time)):
+            raise ValueError('VIO hold limits must be positive')
+        if self.vio_hold_timeout <= self.vio_resume_stable_time:
+            raise ValueError('VIO hold timeout must exceed resume stable time')
+        self.recovery_target = self.recovery_yaw = None
+        self.recovery_started = self.vio_stable_since = None
+        self.resume_state = 'MISSION'
         self.pos_at = self.wp_at = self.vio_at = self.yaw_at = -math.inf
         self.vio_ok = False
         self.hold_target = self.desired_yaw = self.yaw_setpoint = self.pose_reset = None
@@ -136,8 +147,27 @@ class OffboardControl(Node):
     # ---------------- 回调 ----------------
     def _cb_local_pos(self, msg: VehicleLocalPosition):
         reset=(msg.xy_reset_counter,msg.z_reset_counter,msg.heading_reset_counter)
-        if self.pose_reset is not None and reset != self.pose_reset and self.state in ('ARMING','TAKEOFF','MISSION'):
-            self.state='FAULT'
+        if self.pose_reset is not None and reset != self.pose_reset and self.state in ('ARMING','TAKEOFF','MISSION','VIO_HOLD','RECOVERY_HOLD'):
+            # Preserve the physical hold target when EKF changes coordinates.
+            if self.state=='RECOVERY_HOLD':
+                self.recovery_started=self.get_clock().now().nanoseconds*1e-9
+            self._enter_vio_hold()
+            deltas = [0.,0.,0.]
+            try:
+                for i in range(3):
+                    if reset[i] != self.pose_reset[i] and (reset[i]-self.pose_reset[i])%256 != 1:
+                        raise ValueError('missed EKF resets')
+                if reset[0] != self.pose_reset[0]: deltas[:2] = msg.delta_xy
+                if reset[1] != self.pose_reset[1]: deltas[2] = msg.delta_z
+                dyaw = msg.delta_heading if reset[2] != self.pose_reset[2] else 0.
+                if not all(math.isfinite(v) for v in deltas+[dyaw]): raise ValueError('bad reset delta')
+                self.recovery_target = tuple(a+b for a,b in zip(self.recovery_target,deltas))
+                if self.recovery_yaw is not None: self.recovery_yaw += dyaw
+                if self.yaw_setpoint is not None: self.yaw_setpoint += dyaw
+                self.vio_stable_since=None
+                self.state='VIO_HOLD'
+            except (AttributeError,TypeError,ValueError):
+                self.state='FAULT'
         self.pose_reset=reset
         self.local_pos = msg
         self.have_pos = msg.xy_valid and msg.z_valid and all(math.isfinite(v) for v in (msg.x,msg.y,msg.z))
@@ -148,6 +178,7 @@ class OffboardControl(Node):
 
     def _cb_waypoint(self, msg: Point):
         """上层下发航点（本机本地 NED）。"""
+        if self.state in ('VIO_HOLD','RECOVERY_HOLD','FAULT'): return
         if not all(math.isfinite(v) for v in (msg.x,msg.y,msg.z)):return
         # Navigation may publish a ground-level HOLD before takeoff. This
         # controller only accepts cruise-altitude waypoints; landing has its
@@ -162,18 +193,35 @@ class OffboardControl(Node):
         self.vio_at=self.get_clock().now().nanoseconds*1e-9
 
     def _cb_yaw(self,msg):
+        if self.state in ('VIO_HOLD','RECOVERY_HOLD','FAULT'): return
         if math.isfinite(msg.data):
             self.desired_yaw=float(msg.data)
             self.yaw_at=self.get_clock().now().nanoseconds*1e-9
 
     def _start_mission(self,request,response):
+        if self.state == 'RECOVERY_HOLD':
+            now=self.get_clock().now().nanoseconds*1e-9
+            response.success=(self.have_pos and 0<=now-self.pos_at<=self.pose_timeout and
+                              (not self.require_vio or (self.vio_ok and 0<=now-self.vio_at<=.5)) and
+                              self.vio_stable_since is not None and
+                              now-self.vio_stable_since>=self.vio_resume_stable_time and
+                              self.status.nav_state==NAV_STATE_OFFBOARD)
+            response.message='Mission resumed; send a new goal' if response.success else 'Waiting for stable VIO/PX4 Offboard position'
+            if response.success:
+                self.state=self.resume_state
+                self.target=None
+                self.hold_target=self.recovery_target
+                self.takeoff_xy=self.recovery_target[:2]
+                self.takeoff_reached_since=None
+                self.recovery_started=self.vio_stable_since=None
+            return response
         response.success=self.state=='INIT'
         if response.success:self.auto_takeoff=True
         response.message='Start requested; waiting for valid position/VIO' if response.success else 'Restart node after resolving fault/landing'
         return response
 
     def _cb_command(self, msg: String):
-        if msg.data == 'land' and self.state in ('MISSION', 'TAKEOFF'):
+        if msg.data == 'land' and self.state in ('MISSION', 'TAKEOFF','VIO_HOLD','RECOVERY_HOLD'):
             self.get_logger().info('收到降落指令')
             self.state = 'LAND'
 
@@ -238,14 +286,45 @@ class OffboardControl(Node):
                          (self.local_pos.z - z) ** 2)
 
     # ---------------- 主循环 10 Hz ----------------
+    def _enter_vio_hold(self):
+        if self.state in ('VIO_HOLD','RECOVERY_HOLD'): return
+        self.resume_state='TAKEOFF' if self.state in ('ARMING','TAKEOFF') else 'MISSION'
+        self.recovery_started=self.get_clock().now().nanoseconds*1e-9
+        self.recovery_target=(self.local_pos.x,self.local_pos.y,self.local_pos.z)
+        self.recovery_yaw=float(self.local_pos.heading) if math.isfinite(self.local_pos.heading) else None
+        self.vio_stable_since=None
+        self.target=self.desired_yaw=self.heading_hold_target=None
+        self.state='VIO_HOLD'
+
     def _tick(self):
         now=self.get_clock().now().nanoseconds*1e-9
         valid=self.have_pos and 0<=now-self.pos_at<=self.pose_timeout
-        valid=valid and (not self.require_vio or (self.vio_ok and 0<=now-self.vio_at<=.5))
+        vio_valid=not self.require_vio or (self.vio_ok and 0<=now-self.vio_at<=.5)
+        if valid and not vio_valid and self.state in ('ARMING','TAKEOFF','MISSION'):
+            self._enter_vio_hold()
+        if self.state in ('VIO_HOLD','RECOVERY_HOLD'):
+            if vio_valid:
+                if self.vio_stable_since is None: self.vio_stable_since=now
+                if now-self.vio_stable_since>=self.vio_resume_stable_time:
+                    self.state='RECOVERY_HOLD'
+            else:
+                if self.state=='RECOVERY_HOLD': self.recovery_started=now
+                self.vio_stable_since=None
+                self.state='VIO_HOLD'
+            if not valid or (self.state=='VIO_HOLD' and now-self.recovery_started>self.vio_hold_timeout):
+                self.state='FAULT'
+                self.get_logger().error('VIO recovery exhausted or PX4 position invalid')
+            else:
+                self._publish_offboard_mode()
+                self.desired_yaw=self.recovery_yaw
+                self.yaw_at=now
+                self._publish_setpoint(*self.recovery_target)
+                self.pub_state.publish(String(data=self.state))
+                return
         if not valid and self.state in ('ARMING','TAKEOFF','MISSION'):
             self.state='FAULT'
             self.get_logger().error('Position/VIO invalid; relinquishing Offboard to configured PX4 failsafe')
-        if self.state=='FAULT' or (self.state=='INIT' and not valid):
+        if self.state=='FAULT' or (self.state=='INIT' and not (valid and vio_valid)):
             self.pub_state.publish(String(data=self.state))
             return
         # Offboard 心跳必须始终发布（否则 0.5 s 后飞控退出 Offboard）

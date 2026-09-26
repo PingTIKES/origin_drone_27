@@ -105,7 +105,7 @@ for i in $(seq 1 "$NUM_UAVS"); do
     echo "[sim] PX4 instance $i model=$model pose=${SPAWN_POSES[$((i-1))]}"
     PX4_GZ_STANDALONE=1 PX4_SYS_AUTOSTART="$AUTOSTART" \
         PX4_GZ_MODEL="$model" PX4_GZ_MODEL_POSE="${SPAWN_POSES[$((i-1))]}" \
-        "$PX4_BIN" -i "$i" > "/tmp/px4_instance_$i.log" 2>&1 &
+        "$PX4_BIN" -d -i "$i" > "/tmp/px4_instance_$i.log" 2>&1 &
     PIDS+=("$!")
     sleep 5
 done

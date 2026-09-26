@@ -13,3 +13,7 @@ offboard_control:
     forward_heading_limit_deg: 35.0
     max_yaw_rate_deg_s: 45.0
     pose_timeout: 0.5
+    # Keep Offboard during a bounded VIO recovery while PX4 position is valid.
+    # Recovery finishes in RECOVERY_HOLD; start_mission explicitly resumes.
+    vio_hold_timeout: 3.5
+    vio_resume_stable_time: 1.0

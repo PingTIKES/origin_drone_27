@@ -460,14 +460,78 @@ class AdapterTests(unittest.TestCase):
         o._tick()
         self.assertEqual(o.pub_setpoint.messages[-1].position,[1.,-1.,-2.])
 
-    def test_offboard_vio_fault_latches(self):
+    def test_offboard_vio_hold_is_bounded(self):
         o=Offboard();o.require_vio=True;o.state='MISSION';o._cb_local_pos(position());o._tick()
+        self.assertEqual(o.state,'VIO_HOLD');self.assertTrue(o.pub_offboard_mode.messages)
+        o._cb_waypoint(Point(9.,9.,-2.));o._cb_yaw(S(data=2.))
+        o.clock=10.2;p=position(10.2);p.x=1.2;o._cb_local_pos(p);o._tick()
+        self.assertEqual(o.pub_setpoint.messages[-1].position,[1.,-1.,-2.])
+        o.clock=13.6;o._cb_local_pos(position(13.6));count=len(o.pub_offboard_mode.messages);o._tick()
+        self.assertEqual(o.state,'FAULT');self.assertEqual(len(o.pub_offboard_mode.messages),count)
+
+    def test_offboard_recovery_requires_explicit_resume(self):
+        o=Offboard();o.require_vio=True;o.state='MISSION';o._cb_local_pos(position());o._tick()
+        for t in (10.1,10.5,11.2):
+            o.clock=t;o._cb_local_pos(position(t));o._cb_vio(S(data='VALID'));o._tick()
+        self.assertEqual(o.state,'RECOVERY_HOLD')
+        o.status=S(nav_state=14)
+        reply=S();o._start_mission(None,reply)
+        self.assertTrue(reply.success);self.assertEqual(o.state,'MISSION');self.assertIsNone(o.target)
+
+    def test_offboard_applies_ekf_reset_to_hold_target(self):
+        o=Offboard();o.state='MISSION';o._cb_local_pos(position());o._tick()
+        p=position();p.xy_reset_counter=1;p.delta_xy=[.45,-.2];p.x+=.45;p.y-=.2
+        o._cb_local_pos(p);o._tick()
+        self.assertNotEqual(o.state,'FAULT')
+        self.assertEqual(o.pub_setpoint.messages[-1].position,[1.45,-1.2,-2.])
+
+    def test_offboard_invalid_px4_pose_still_faults(self):
+        o=Offboard();o.state='MISSION';p=position();p.xy_valid=False;o._cb_local_pos(p);o._tick()
         self.assertEqual(o.state,'FAULT');self.assertFalse(o.pub_offboard_mode.messages)
-        o._cb_vio(S(data='VALID'));o._tick();self.assertEqual(o.state,'FAULT')
+
+    def test_offboard_late_recovery_has_time_to_stabilize(self):
+        o=Offboard();o.require_vio=True;o.state='MISSION';o._cb_local_pos(position());o._tick()
+        for t in (11.9,12.3,12.7,13.0):
+            o.clock=t;o._cb_local_pos(position(t));o._cb_vio(S(data='VALID'));o._tick()
+        self.assertEqual(o.state,'RECOVERY_HOLD')
+
+    def test_offboard_reset_after_long_recovery_hold(self):
+        o=Offboard();o.state='MISSION';o._cb_local_pos(position());o._enter_vio_hold()
+        o.state='RECOVERY_HOLD';o.clock=30.
+        p=position(30.);p.xy_reset_counter=1;p.delta_xy=[.2,0.];p.x+=.2
+        o._cb_local_pos(p);o._tick()
+        self.assertEqual(o.state,'VIO_HOLD')
+        self.assertEqual(o.pub_setpoint.messages[-1].position,[1.2,-1.,-2.])
+
+    def test_offboard_missed_reset_fails_closed(self):
+        o=Offboard();o.state='MISSION';o._cb_local_pos(position())
+        p=position();p.xy_reset_counter=2;p.delta_xy=[.2,0.]
+        o._cb_local_pos(p);o._tick()
+        self.assertEqual(o.state,'FAULT');self.assertFalse(o.pub_offboard_mode.messages)
+
+    def test_offboard_flickering_health_does_not_extend_recovery(self):
+        o=Offboard();o.require_vio=True;o.state='MISSION';o._cb_local_pos(position());o._tick()
+        for j in range(1,38):
+            t=10.+j*.1;o.clock=t;o._cb_local_pos(position(t))
+            o._cb_vio(S(data='VALID' if j%2 else 'INVALID'));o._tick()
+        self.assertEqual(o.state,'FAULT')
+
+    def test_nav_clears_goal_during_recovery(self):
+        n=self.nav();n.control_state(S(data='VIO_HOLD'));n.target(Point(3.,1.,-2.));n.tick()
+        self.assertIsNone(n.goal);self.assertFalse(n.pub.messages)
+        n.control_state(S(data='MISSION'));self.assertIsNone(n.goal)
 
     def test_bridge_rejects_stale_images(self):
         b=Bridge();b.last_good=10;b.watchdog();self.assertEqual(b.health.messages[-1].data,'INVALID')
         b.image_at=[10.,10.];b.watchdog();self.assertEqual(b.health.messages[-1].data,'VALID')
+
+    def test_bridge_rejection_breaks_recovery_streak(self):
+        b=Bridge();zero=np.zeros(3);q=np.array([1.,0.,0.,0.])
+        b.recovery.begin(10.,10.,zero,q,zero)
+        b.recovery.accept(10.1,10.1,zero,q,zero)
+        b.reject('EXCESSIVE_VARIANCE')
+        self.assertIsNone(b.recovery.stable_since)
+        self.assertIsNone(b.recovery.previous)
 
     def test_bridge_output_and_jump_latch(self):
         b=Bridge();b.image_at=[10.,10.]
@@ -478,7 +542,27 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(b.pub.messages[0].position,[1.,-2.,-3.])
         self.assertEqual(b.pub.messages[0].pose_frame,2)
         b.clock=10.1;m.header.stamp.nanosec=100000000;m.pose.pose.position.x=10.
-        b.callback(m);self.assertTrue(b.latched);self.assertEqual(len(b.pub.messages),1)
+        b.callback(m);self.assertTrue(b.recovery.active);self.assertEqual(len(b.pub.messages),1)
+        b.clock=12.2;b.watchdog();self.assertTrue(b.latched)
+
+    def test_recovery_accepts_bounded_stable_sequence(self):
+        from uav_localization.vio_recovery import VioRecovery
+        g=VioRecovery();q=np.array([1.,0.,0.,0.]);zero=np.zeros(3)
+        g.begin(10.,10.,zero,q,zero)
+        for t in (10.01,10.1,10.19,10.28,10.37,10.46):
+            self.assertFalse(g.accept(t,t,np.array([.45,0.,0.]),q,zero))
+        self.assertTrue(g.accept(10.55,10.55,np.array([.45,0.,0.]),q,zero))
+
+    def test_recovery_rejects_divergence_and_gaps(self):
+        from uav_localization.vio_recovery import VioRecovery
+        q=np.array([1.,0.,0.,0.]);zero=np.zeros(3);g=VioRecovery()
+        g.begin(10.,10.,zero,q,zero)
+        for t in np.arange(10.01,12.1,.05):
+            self.assertFalse(g.accept(t,t,np.array([2.,0.,0.]),q,zero))
+        self.assertTrue(g.expired(12.1))
+        g=VioRecovery();g.begin(10.,10.,zero,q,zero)
+        self.assertFalse(g.accept(10.1,10.1,zero,q,zero))
+        self.assertFalse(g.accept(10.7,10.7,zero,q,zero))
 
     def test_algorithm_launch_sensor_only(self):
         modules={name:types.ModuleType(name) for name in ('launch','launch.actions','launch.substitutions',
