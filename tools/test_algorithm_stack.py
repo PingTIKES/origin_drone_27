@@ -466,7 +466,7 @@ class AdapterTests(unittest.TestCase):
         o._cb_waypoint(Point(9.,9.,-2.));o._cb_yaw(S(data=2.))
         o.clock=10.2;p=position(10.2);p.x=1.2;o._cb_local_pos(p);o._tick()
         self.assertEqual(o.pub_setpoint.messages[-1].position,[1.,-1.,-2.])
-        o.clock=13.6;o._cb_local_pos(position(13.6));count=len(o.pub_offboard_mode.messages);o._tick()
+        o.clock=15.1;o._cb_local_pos(position(15.1));count=len(o.pub_offboard_mode.messages);o._tick()
         self.assertEqual(o.state,'FAULT');self.assertEqual(len(o.pub_offboard_mode.messages),count)
 
     def test_offboard_recovery_requires_explicit_resume(self):
@@ -511,7 +511,7 @@ class AdapterTests(unittest.TestCase):
 
     def test_offboard_flickering_health_does_not_extend_recovery(self):
         o=Offboard();o.require_vio=True;o.state='MISSION';o._cb_local_pos(position());o._tick()
-        for j in range(1,38):
+        for j in range(1,53):
             t=10.+j*.1;o.clock=t;o._cb_local_pos(position(t))
             o._cb_vio(S(data='VALID' if j%2 else 'INVALID'));o._tick()
         self.assertEqual(o.state,'FAULT')
@@ -563,6 +563,30 @@ class AdapterTests(unittest.TestCase):
         g=VioRecovery();g.begin(10.,10.,zero,q,zero)
         self.assertFalse(g.accept(10.1,10.1,zero,q,zero))
         self.assertFalse(g.accept(10.7,10.7,zero,q,zero))
+
+    def test_data_gap_uses_separate_source_and_recovery_clocks(self):
+        from uav_localization.vio_recovery import VioRecovery
+        q=np.array([1.,0.,0.,0.]);zero=np.zeros(3);shift=np.array([1.44,0.,0.])
+        g=VioRecovery();g.begin(12.124,10.,zero,q,zero,source_gap=True)
+        for t in (12.124,12.224,12.324,12.424,12.524):
+            self.assertFalse(g.accept(t,t,shift,q,zero))
+        self.assertTrue(g.accept(12.624,12.624,shift,q,zero))
+        self.assertFalse(g.expired(12.624))
+
+    def test_data_gap_still_rejects_unbounded_relocalization(self):
+        from uav_localization.vio_recovery import VioRecovery
+        q=np.array([1.,0.,0.,0.]);zero=np.zeros(3)
+        g=VioRecovery();g.begin(12.124,10.,zero,q,zero,source_gap=True)
+        for t in np.arange(12.124,14.3,.1):
+            self.assertFalse(g.accept(t,t,np.array([4.,0.,0.]),q,zero))
+        self.assertTrue(g.expired(14.3))
+
+    def test_gap_larger_than_configured_source_limit_stays_rejected(self):
+        from uav_localization.vio_recovery import VioRecovery
+        q=np.array([1.,0.,0.,0.]);zero=np.zeros(3)
+        g=VioRecovery();g.begin(14.,10.,zero,q,zero,source_gap=True)
+        self.assertFalse(g.accept(14.,14.,zero,q,zero))
+        self.assertIsNone(g.first_candidate_stamp)
 
     def test_algorithm_launch_sensor_only(self):
         modules={name:types.ModuleType(name) for name in ('launch','launch.actions','launch.substitutions',

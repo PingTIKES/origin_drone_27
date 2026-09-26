@@ -151,8 +151,10 @@ VIO 桥检测到位置突跳后进入有界隔离，`vio_health` 为 `INVALID`�
 桥接器不发布伪造位置，也不把 PX4 已融合的位置反馈作为新的独立视觉观测。
 
 默认要求候选 VIO 连续稳定 0.5 s，相邻候选与速度预测的残差不超过 0.03 m，
-候选间隔不超过 0.1 s，位置相对最后正常状态的匀速预测偏差不超过 0.75 m、
-姿态偏差不超过 20°，恢复总等待上限为 2 s。这些检查只能约束不连续性，不能
+候选间隔不超过 0.1 s。单帧突跳允许的匀速预测偏差不超过 0.75 m、姿态偏差不超过
+20°；超过 1 s 的 OpenVINS 输出缺口采用单独的时间和位移限制：首个新样本距离上一
+正常样本最多 3 s，预测偏差最多 2.5 m、姿态偏差最多 90°。从首个异常样本开始的
+连续性检查等待上限为 2 s；该计时不会从断流前的最后一帧开始。这些检查只能约束不连续性，不能
 证明绝对位置准确。恢复时递增 PX4 EV `reset_counter`，控制器用 PX4 的
 `delta_xy`、`delta_z`、`delta_heading` 同步调整悬停目标，避免追赶坐标重置前的目标。
 缺失的重置增量、失效的 PX4 位置、持续超时仍进入 `FAULT`。
@@ -168,7 +170,7 @@ ros2 service call /uav1/start_mission std_srvs/srv/Trigger '{}'
 ```
 
 桥接恢复参数在 `src/uav_localization/config/params.yaml`，控制器的
-`vio_hold_timeout`（默认 3.5 s）和 `vio_resume_stable_time`（默认 1 s）在
+`vio_hold_timeout`（默认 5 s）和 `vio_resume_stable_time`（默认 1 s）在
 `src/uav_control/config/params.yaml`。调整时须给桥接隔离与控制器稳定等待留出时间。
 真机目前没有独立定位备份，持续 VIO 丢失后不能保证长时间定点留空；保留 PX4
 定位失效处理，独立传感器接入之前不宣称具有冗余定位。

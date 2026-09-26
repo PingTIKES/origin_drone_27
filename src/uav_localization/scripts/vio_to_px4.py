@@ -24,6 +24,8 @@ class VioBridge(Node):
                         max_speed=4.,max_jump=.4,expected_world='global',expected_imu='imu',
                         recovery_stable_time=.5,recovery_timeout=2.,recovery_max_correction=.75,
                         recovery_max_angle_deg=20.,recovery_sample_gap=.1,recovery_residual=.03,
+                        recovery_max_source_gap=3.,recovery_gap_max_correction=2.5,
+                        recovery_gap_max_angle_deg=90.,
                         t_body_imu=np.eye(4).ravel().tolist()).items(): self.declare_parameter(k,v)
         self.p = lambda k: self.get_parameter(k).value
         self.extrinsic = transform(np.array(self.p('t_body_imu')).reshape(4,4))
@@ -48,7 +50,9 @@ class VioBridge(Node):
     def new_recovery(self):
         return VioRecovery(*(float(self.p(k)) for k in (
             'recovery_stable_time','recovery_timeout','recovery_max_correction',
-            'recovery_max_angle_deg','recovery_sample_gap','recovery_residual')))
+            'recovery_max_angle_deg','recovery_sample_gap','recovery_residual',
+            'recovery_max_source_gap','recovery_gap_max_correction',
+            'recovery_gap_max_angle_deg')))
 
     def image(self,msg,index):
         self.image_at[index]=msg.header.stamp.sec+msg.header.stamp.nanosec*1e-9
@@ -112,7 +116,8 @@ class VioBridge(Node):
             dt = stamp-self.last_stamp
             angle=2*math.acos(float(np.clip(abs(np.dot(quat,self.last_quat)),0.,1.)))
             if dt > 1. or np.linalg.norm(pos-self.last_position)>self.p('max_jump')+self.p('max_speed')*dt or angle>math.radians(self.p('recovery_max_angle_deg')):
-                self.recovery.begin(now,self.last_stamp,self.last_position,self.last_quat,self.last_velocity)
+                self.recovery.begin(now,self.last_stamp,self.last_position,self.last_quat,
+                                    self.last_velocity,source_gap=dt>1.)
                 self.reason = 'DATA_GAP' if dt>1. else ('ORIENTATION_DISCONTINUITY' if angle>math.radians(self.p('recovery_max_angle_deg')) else 'POSITION_DISCONTINUITY')
                 self.health.publish(String(data='INVALID'))
                 self.get_logger().warn(f'VIO quarantine: {self.reason}; dt={dt:.4f}s jump={np.linalg.norm(pos-self.last_position):.3f}m')

@@ -67,7 +67,7 @@ class OffboardControl(Node):
         self.declare_parameter('max_yaw_rate_deg_s', 45.0)
         self.declare_parameter('pose_timeout', .5)
         self.declare_parameter('require_vio', False)
-        self.declare_parameter('vio_hold_timeout', 3.5)
+        self.declare_parameter('vio_hold_timeout', 5.0)
         self.declare_parameter('vio_resume_stable_time', 1.0)
         self.declare_parameter('target_system', 0)  # 0 preserves SITL instance+1
 
@@ -313,7 +313,10 @@ class OffboardControl(Node):
                 self.state='VIO_HOLD'
             if not valid or (self.state=='VIO_HOLD' and now-self.recovery_started>self.vio_hold_timeout):
                 self.state='FAULT'
-                self.get_logger().error('VIO recovery exhausted or PX4 position invalid')
+                self.get_logger().error(
+                    f'VIO recovery fault: px4_pose_valid={valid}, vio_valid={vio_valid}, '
+                    f'hold_elapsed={now-self.recovery_started:.2f}s, '
+                    f'hold_limit={self.vio_hold_timeout:.2f}s')
             else:
                 self._publish_offboard_mode()
                 self.desired_yaw=self.recovery_yaw

@@ -15,5 +15,5 @@ offboard_control:
     pose_timeout: 0.5
     # Keep Offboard during a bounded VIO recovery while PX4 position is valid.
     # Recovery finishes in RECOVERY_HOLD; start_mission explicitly resumes.
-    vio_hold_timeout: 3.5
+    vio_hold_timeout: 5.0
     vio_resume_stable_time: 1.0
