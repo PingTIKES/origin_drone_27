@@ -38,15 +38,20 @@ class GeometryTests(unittest.TestCase):
         spawn=(1.3,9.4)
         initial=(2.,-1.)
         alignment=SpawnAlignment(spawn)
-        tx,ty,theta=alignment.latch(initial,.4)
+        tx,ty,theta=alignment.latch(initial)
         def in_map(position):
             x,y=position
             return (tx+math.cos(theta)*x-math.sin(theta)*y,
                     ty+math.sin(theta)*x+math.cos(theta)*y)
         np.testing.assert_allclose(in_map(initial),spawn)
-        moved=(initial[0]+.5,initial[1])
-        self.assertEqual(alignment.latch(moved,.7),(tx,ty,theta))
-        self.assertAlmostEqual(np.linalg.norm(np.array(in_map(moved))-spawn),.5)
+        self.assertAlmostEqual(theta,math.pi/2)
+        north=(initial[0]+.5,initial[1])
+        west=(initial[0],initial[1]+.5)
+        east=(initial[0],initial[1]-.5)
+        self.assertEqual(alignment.latch(north),(tx,ty,theta))
+        np.testing.assert_allclose(in_map(north),(spawn[0],spawn[1]+.5))
+        np.testing.assert_allclose(in_map(west),(spawn[0]-.5,spawn[1]))
+        np.testing.assert_allclose(in_map(east),(spawn[0]+.5,spawn[1]))
 
     def test_x500_self_mask_keeps_external_obstacles(self):
         points=np.array([[0.,0.,0.], [.174,.174,.06],

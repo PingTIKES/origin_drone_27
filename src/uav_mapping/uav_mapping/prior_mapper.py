@@ -6,12 +6,11 @@ from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import OccupancyGrid
 from PIL import Image
-from px4_msgs.msg import VehicleAttitude, VehicleLocalPosition
+from px4_msgs.msg import VehicleLocalPosition
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from tf2_ros import TransformBroadcaster
-from uav_mapping.rolling_grid import body_to_nwu
 from uav_mapping.map_alignment import SpawnAlignment
 import numpy as np
 import yaml
@@ -49,8 +48,6 @@ class PriorMapper(Node):
         prior, values = load_prior(path)
         spawn_x, spawn_y = SPAWN_ENU[uid - 1]
         self.alignment = SpawnAlignment((spawn_x, spawn_y))
-        self.yaw = self.position = None
-        self.attitude_stamp = self.position_stamp = None
         self.map = OccupancyGrid()
         self.map.header.frame_id = f'uav{uid}_map'
         self.map.info.width = prior['width']
@@ -65,36 +62,16 @@ class PriorMapper(Node):
         self.pub = self.create_publisher(OccupancyGrid, 'global_map', qos)
         self.tf_pub = TransformBroadcaster(self)
         self.odom_frame = f'uav{uid}_odom'
-        self.create_subscription(VehicleAttitude, f'/px4_{uid}/fmu/out/vehicle_attitude',
-                                 self.on_attitude, qos_profile_sensor_data)
         self.create_subscription(VehicleLocalPosition, f'/px4_{uid}/fmu/out/vehicle_local_position',
                                  self.on_position, qos_profile_sensor_data)
         self.create_timer(1., self.publish_map)
         self.get_logger().info(f'Loaded field prior: {path} ({self.map.info.width}x{self.map.info.height})')
 
-    def on_attitude(self, msg):
-        if self.alignment.transform is not None: return
-        try:
-            rotation = body_to_nwu(msg.q)
-        except ValueError:
-            return
-        self.yaw = math.atan2(rotation[1, 0], rotation[0, 0])
-        self.attitude_stamp = msg.timestamp
-        self.maybe_anchor()
-
     def on_position(self, msg):
         if self.alignment.transform is not None: return
         if msg.xy_valid and all(math.isfinite(v) for v in (msg.x, msg.y)):
-            self.position = (msg.x, -msg.y)
-            self.position_stamp = msg.timestamp
-            self.maybe_anchor()
-
-    def maybe_anchor(self):
-        if (self.position is not None and self.yaw is not None
-                and self.position_stamp is not None and self.attitude_stamp is not None
-                and abs(self.position_stamp - self.attitude_stamp) <= 150_000):
-            self.alignment.latch(self.position, self.yaw)
-            self.get_logger().info('Simulation map -> odom alignment fixed at initial PX4 pose')
+            self.alignment.latch((msg.x, -msg.y))
+            self.get_logger().info('Simulation map -> odom fixed at spawn with ENU/NWU axes')
 
     def publish_map(self):
         self.map.header.stamp = self.get_clock().now().to_msg()

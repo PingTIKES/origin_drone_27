@@ -1,12 +1,11 @@
-"""Fixed simulation spawn alignment between the field map and PX4 odometry."""
+"""Fixed Gazebo ENU map alignment with PX4's local NWU odometry."""
 import math
 
 
-def map_to_odom(spawn, position, yaw):
-    """Align the initial odometry pose with the known Gazebo spawn pose."""
-    c, s = math.cos(yaw), math.sin(yaw)
-    x, y = position
-    return (spawn[0] - c*x - s*y, spawn[1] + s*x - c*y, -yaw)
+def map_to_odom(spawn, position):
+    """Gazebo east/north = -PX4 NWU west/north, anchored at spawn."""
+    north, west = position
+    return (spawn[0] + west, spawn[1] - north, math.pi / 2)
 
 
 class SpawnAlignment:
@@ -14,7 +13,7 @@ class SpawnAlignment:
         self.spawn = spawn
         self.transform = None
 
-    def latch(self, position, yaw):
+    def latch(self, position):
         if self.transform is None:
-            self.transform = map_to_odom(self.spawn, position, yaw)
+            self.transform = map_to_odom(self.spawn, position)
         return self.transform
